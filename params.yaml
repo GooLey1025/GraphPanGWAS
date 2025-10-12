@@ -7,13 +7,13 @@
 ##############################################################################
 
 # Population sample list file
-population_list: "532rice.list"
+population_list: "698rice.list"
 
 # Directory containing phenotype TSV files
-phenotypes_dir: "./phenotypes/532rice"
+phenotypes_dir: "./phenotypes/698rice"
 
 # Output directory prefix
-output_prefix: "532rice"
+output_prefix: "698rice"
 
 # Analysis type name (used in output directory structure)
 analysis_type: "SNP_INDEL_SV_split"
@@ -23,20 +23,20 @@ analysis_type: "SNP_INDEL_SV_split"
 ##############################################################################
 
 # SNP VCF file
-snp_vcf: "raw_vcf_dir/532rice.snp.impute.vcf"
+snp_vcf: "raw_vcf_dir/698rice.snp.impute.vcf"
 
 # INDEL VCF file
-indel_vcf: "raw_vcf_dir/532rice.indel.impute.vcf"
+indel_vcf: "raw_vcf_dir/698rice.indel.impute.vcf"
 
 # Structural variant VCF file
-sv_vcf: "raw_vcf_dir/532rice.pangenie.multi.impute.vcf"
+sv_vcf: "raw_vcf_dir/698rice.pangenie.multi.impute.vcf"
 
 ##############################################################################
 # GWAS PARAMETERS
 ##############################################################################
 
 # Maximum number of parallel GWAS jobs
-max_parallel_gwas: 5
+max_parallel_gwas: 15
 
 # Minor allele frequency threshold
 maf_threshold: 0.01
