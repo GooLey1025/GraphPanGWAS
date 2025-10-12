@@ -8,10 +8,10 @@
 ========================================================================================
 */
 
-process EXTRACT_HERITABILITY {
-    tag "heritability_summary"
+process EXTRACT_HERITABILITY_SPLIT {
+    tag "heritability_summary_split"
     label 'process_single'
-    publishDir "${params.output_prefix}/${params.analysis_type}/heritability", 
+    publishDir "${params.output_prefix}/${params.analysis_type}_split/heritability", 
                mode: 'copy'
     
     input:
@@ -20,7 +20,7 @@ process EXTRACT_HERITABILITY {
     val analysis_type
     
     output:
-    path "${output_prefix}.${analysis_type}.gcta.tsv", emit: heritability_summary
+    path "${output_prefix}.${analysis_type}_split.gcta.tsv", emit: heritability_summary
     
     script:
     """
@@ -28,7 +28,7 @@ process EXTRACT_HERITABILITY {
     set -euo pipefail
     
     # Create output file with header
-    echo -e "Phenotype\\tHeritability" > ${output_prefix}.${analysis_type}.gcta.tsv
+    echo -e "Phenotype\\tHeritability" > ${output_prefix}.${analysis_type}_split.gcta.tsv
     
     # Extract heritability from each .hsq file
     for file in *.hsq; do
@@ -40,7 +40,7 @@ process EXTRACT_HERITABILITY {
             if [ \$(wc -l < "\${file}") -ge 5 ]; then
                 value=\$(sed -n '5p' "\${file}" | awk '{print \$2}')
                 if [ ! -z "\${value}" ]; then
-                    echo -e "\${phenotype}\\t\${value}" >> ${output_prefix}.${analysis_type}.gcta.tsv
+                    echo -e "\${phenotype}\\t\${value}" >> ${output_prefix}.${analysis_type}_split.gcta.tsv
                 fi
             fi
         fi
@@ -50,10 +50,52 @@ process EXTRACT_HERITABILITY {
     """
 }
 
-process EXTRACT_LEAD_MARKERS {
-    tag "lead_markers_summary"
+process EXTRACT_HERITABILITY_UNSPLIT {
+    tag "heritability_summary_unsplit"
     label 'process_single'
-    publishDir "${params.output_prefix}/${params.analysis_type}/Lead_marker", 
+    publishDir "${params.output_prefix}/${params.analysis_type}_unsplit/heritability", 
+               mode: 'copy'
+    
+    input:
+    path hsq_files
+    val output_prefix
+    val analysis_type
+    
+    output:
+    path "${output_prefix}.${analysis_type}_unsplit.gcta.tsv", emit: heritability_summary
+    
+    script:
+    """
+    #!/bin/bash
+    set -euo pipefail
+    
+    # Create output file with header
+    echo -e "Phenotype\\tHeritability" > ${output_prefix}.${analysis_type}_unsplit.gcta.tsv
+    
+    # Extract heritability from each .hsq file
+    for file in *.hsq; do
+        if [ -f "\${file}" ]; then
+            # Get phenotype name (remove .hsq extension)
+            phenotype=\$(basename "\${file}" .hsq)
+            
+            # Extract V(G)/Vp value from line 5, column 2
+            if [ \$(wc -l < "\${file}") -ge 5 ]; then
+                value=\$(sed -n '5p' "\${file}" | awk '{print \$2}')
+                if [ ! -z "\${value}" ]; then
+                    echo -e "\${phenotype}\\t\${value}" >> ${output_prefix}.${analysis_type}_unsplit.gcta.tsv
+                fi
+            fi
+        fi
+    done
+    
+    echo "Heritability extraction complete."
+    """
+}
+
+process EXTRACT_LEAD_MARKERS_SPLIT {
+    tag "lead_markers_summary_split"
+    label 'process_single'
+    publishDir "${params.output_prefix}/${params.analysis_type}_split/Lead_marker", 
                mode: 'copy'
     
     input:
@@ -62,7 +104,7 @@ process EXTRACT_LEAD_MARKERS {
     val analysis_type
     
     output:
-    path "${output_prefix}.${analysis_type}.ld_marker.tsv", emit: lead_markers_summary
+    path "${output_prefix}.${analysis_type}_split.ld_marker.tsv", emit: lead_markers_summary
     
     script:
     """
@@ -70,7 +112,7 @@ process EXTRACT_LEAD_MARKERS {
     set -euo pipefail
     
     # Create output file with header
-    echo -e "Marker_ID" > ${output_prefix}.${analysis_type}.ld_marker.tsv
+    echo -e "Marker_ID" > ${output_prefix}.${analysis_type}_split.ld_marker.tsv
     
     # Extract lead marker IDs from each .clumped file
     for file in *.clumped; do
@@ -78,14 +120,55 @@ process EXTRACT_LEAD_MARKERS {
             # Skip header line and extract SNP IDs (column 3)
             # Check if file has more than just header
             if [ \$(wc -l < "\${file}") -gt 1 ]; then
-                sed -n '2,\$p' "\${file}" | awk 'NF > 0 {print \$3}' >> ${output_prefix}.${analysis_type}.ld_marker.tsv
+                sed -n '2,\$p' "\${file}" | awk 'NF > 0 {print \$3}' >> ${output_prefix}.${analysis_type}_split.ld_marker.tsv
             fi
         fi
     done
     
     # Remove duplicates while maintaining order
-    sort -u ${output_prefix}.${analysis_type}.ld_marker.tsv > temp.tsv
-    mv temp.tsv ${output_prefix}.${analysis_type}.ld_marker.tsv
+    sort -u ${output_prefix}.${analysis_type}_split.ld_marker.tsv > temp.tsv
+    mv temp.tsv ${output_prefix}.${analysis_type}_split.ld_marker.tsv
+    
+    echo "Lead marker extraction complete."
+    """
+}
+
+process EXTRACT_LEAD_MARKERS_UNSPLIT {
+    tag "lead_markers_summary_unsplit"
+    label 'process_single'
+    publishDir "${params.output_prefix}/${params.analysis_type}_unsplit/Lead_marker", 
+               mode: 'copy'
+    
+    input:
+    path clumped_files
+    val output_prefix
+    val analysis_type
+    
+    output:
+    path "${output_prefix}.${analysis_type}_unsplit.ld_marker.tsv", emit: lead_markers_summary
+    
+    script:
+    """
+    #!/bin/bash
+    set -euo pipefail
+    
+    # Create output file with header
+    echo -e "Marker_ID" > ${output_prefix}.${analysis_type}_unsplit.ld_marker.tsv
+    
+    # Extract lead marker IDs from each .clumped file
+    for file in *.clumped; do
+        if [ -f "\${file}" ] && [ -s "\${file}" ]; then
+            # Skip header line and extract SNP IDs (column 3)
+            # Check if file has more than just header
+            if [ \$(wc -l < "\${file}") -gt 1 ]; then
+                sed -n '2,\$p' "\${file}" | awk 'NF > 0 {print \$3}' >> ${output_prefix}.${analysis_type}_unsplit.ld_marker.tsv
+            fi
+        fi
+    done
+    
+    # Remove duplicates while maintaining order
+    sort -u ${output_prefix}.${analysis_type}_unsplit.ld_marker.tsv > temp.tsv
+    mv temp.tsv ${output_prefix}.${analysis_type}_unsplit.ld_marker.tsv
     
     echo "Lead marker extraction complete."
     """

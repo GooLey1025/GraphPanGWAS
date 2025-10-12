@@ -34,8 +34,10 @@ log.info """\
 include { VCF_PREPROCESSING } from './modules/vcf_preprocessing'
 include { GWAS_ANALYSIS_SPLIT } from './modules/gwas'
 include { GWAS_ANALYSIS_UNSPLIT } from './modules/gwas'
-include { EXTRACT_HERITABILITY } from './modules/postprocessing'
-include { EXTRACT_LEAD_MARKERS } from './modules/postprocessing'
+include { EXTRACT_HERITABILITY_SPLIT } from './modules/postprocessing'
+include { EXTRACT_HERITABILITY_UNSPLIT } from './modules/postprocessing'
+include { EXTRACT_LEAD_MARKERS_SPLIT } from './modules/postprocessing'
+include { EXTRACT_LEAD_MARKERS_UNSPLIT } from './modules/postprocessing'
 
 /*
 ========================================================================================
@@ -104,16 +106,16 @@ workflow {
     )
     
     // Post-processing for SPLIT
-    EXTRACT_HERITABILITY(
+    EXTRACT_HERITABILITY_SPLIT(
         gwas_results_split.hsq_files.collect(),
         params.output_prefix,
-        "${analysis_type_name}_split"
+        analysis_type_name
     )
     
-    EXTRACT_LEAD_MARKERS(
+    EXTRACT_LEAD_MARKERS_SPLIT(
         gwas_results_split.clumped_files.collect(),
         params.output_prefix,
-        "${analysis_type_name}_split"
+        analysis_type_name
     )
     
     // ===== Run GWAS on UNSPLIT version =====
@@ -126,16 +128,16 @@ workflow {
     )
     
     // Post-processing for UNSPLIT
-    EXTRACT_HERITABILITY(
+    EXTRACT_HERITABILITY_UNSPLIT(
         gwas_results_unsplit.hsq_files.collect(),
         params.output_prefix,
-        "${analysis_type_name}_unsplit"
+        analysis_type_name
     )
     
-    EXTRACT_LEAD_MARKERS(
+    EXTRACT_LEAD_MARKERS_UNSPLIT(
         gwas_results_unsplit.clumped_files.collect(),
         params.output_prefix,
-        "${analysis_type_name}_unsplit"
+        analysis_type_name
     )
 }
 
