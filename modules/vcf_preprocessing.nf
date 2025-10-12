@@ -246,8 +246,8 @@ EOF
     """
 }
 
-process MERGE_VCF_FILES {
-    tag "${analysis_type}"
+process MERGE_VCF_FILES_SPLIT {
+    tag "${analysis_type}_split"
     label 'process_very_high'
     publishDir "${params.vcf_dir}", mode: 'copy'
     
@@ -256,7 +256,7 @@ process MERGE_VCF_FILES {
     val analysis_type
     
     output:
-    path "merged.${analysis_type}.vcf", emit: merged_vcf
+    path "merged.${analysis_type}_split.vcf", emit: merged_vcf
     
     script:
     def vcf_list = vcf_files.collect{ it.toString() }.join(' ')
@@ -272,7 +272,37 @@ process MERGE_VCF_FILES {
     ls *.sorted.gz > vcf_list.txt
     
     # Merge VCF files
-    ${params.bcftools} concat -a -f vcf_list.txt -o merged.${analysis_type}.vcf
+    ${params.bcftools} concat -a -f vcf_list.txt -o merged.${analysis_type}_split.vcf
+    """
+}
+
+process MERGE_VCF_FILES_UNSPLIT {
+    tag "${analysis_type}_unsplit"
+    label 'process_very_high'
+    publishDir "${params.vcf_dir}", mode: 'copy'
+    
+    input:
+    path vcf_files
+    val analysis_type
+    
+    output:
+    path "merged.${analysis_type}_unsplit.vcf", emit: merged_vcf
+    
+    script:
+    def vcf_list = vcf_files.collect{ it.toString() }.join(' ')
+    """
+    # Sort each VCF file
+    for vcf in ${vcf_list}; do
+        ${params.bcftools} sort "\${vcf}" > "\${vcf}.sorted"
+        ${params.bgzip} -c -@ ${task.cpus} "\${vcf}.sorted" > "\${vcf}.sorted.gz"
+        ${params.bcftools} index -f --tbi --threads ${task.cpus} "\${vcf}.sorted.gz"
+    done
+    
+    # Create list of sorted VCF files
+    ls *.sorted.gz > vcf_list.txt
+    
+    # Merge VCF files
+    ${params.bcftools} concat -a -f vcf_list.txt -o merged.${analysis_type}_unsplit.vcf
     """
 }
 
@@ -313,14 +343,14 @@ workflow VCF_PREPROCESSING {
     }
     
     // Merge both split and unsplit VCF files (always generate both)
-    merged_split_vcf = MERGE_VCF_FILES(
+    merged_split_vcf = MERGE_VCF_FILES_SPLIT(
         processed_split_vcfs.collect(),
-        "${analysis_type}_split"
+        analysis_type
     )
     
-    merged_unsplit_vcf = MERGE_VCF_FILES(
+    merged_unsplit_vcf = MERGE_VCF_FILES_UNSPLIT(
         processed_unsplit_vcfs.collect(),
-        "${analysis_type}_unsplit"
+        analysis_type
     )
     
     emit:

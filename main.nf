@@ -50,12 +50,24 @@ workflow {
     sv_vcf_ch = params.sv_vcf ? Channel.fromPath(params.sv_vcf, checkIfExists: true) : Channel.empty()
     population_list_ch = Channel.fromPath(params.population_list, checkIfExists: true)
     
-    // VCF Preprocessing based on analysis type
+    // Determine the analysis type name based on available VCFs
+    def analysis_type_name = params.analysis_type
+    if (params.analysis_type == 'all') {
+        // Auto-generate name based on available VCFs
+        def vcf_types = []
+        if (params.snp_vcf) vcf_types.add('SNP')
+        if (params.indel_vcf) vcf_types.add('INDEL') 
+        if (params.sv_vcf) vcf_types.add('SV')
+        analysis_type_name = vcf_types.join('_')
+        log.info "Auto-detected analysis type: ${analysis_type_name}"
+    }
+    
+    // VCF Preprocessing (generates both split and unsplit for all available types)
     VCF_PREPROCESSING(
         snp_vcf_ch,
         indel_vcf_ch,
         sv_vcf_ch,
-        params.analysis_type
+        analysis_type_name
     )
     
     // Validate and collect phenotype files
@@ -94,13 +106,13 @@ workflow {
     EXTRACT_HERITABILITY(
         gwas_results_split.hsq_files.collect(),
         params.output_prefix,
-        "${params.analysis_type}_split"
+        "${analysis_type_name}_split"
     )
     
     EXTRACT_LEAD_MARKERS(
         gwas_results_split.clumped_files.collect(),
         params.output_prefix,
-        "${params.analysis_type}_split"
+        "${analysis_type_name}_split"
     )
     
     // ===== Run GWAS on UNSPLIT version =====
@@ -116,13 +128,13 @@ workflow {
     EXTRACT_HERITABILITY(
         gwas_results_unsplit.hsq_files.collect(),
         params.output_prefix,
-        "${params.analysis_type}_unsplit"
+        "${analysis_type_name}_unsplit"
     )
     
     EXTRACT_LEAD_MARKERS(
         gwas_results_unsplit.clumped_files.collect(),
         params.output_prefix,
-        "${params.analysis_type}_unsplit"
+        "${analysis_type_name}_unsplit"
     )
 }
 
@@ -138,10 +150,11 @@ workflow.onComplete {
         Pipeline completed!
         Status    : ${workflow.success ? 'SUCCESS' : 'FAILED'}
         Duration  : ${workflow.duration}
+        Analysis  : ${analysis_type_name}
         
         Results:
-          SPLIT   : ${params.output_prefix}/${params.analysis_type}_split/
-          UNSPLIT : ${params.output_prefix}/${params.analysis_type}_unsplit/
+          SPLIT   : ${params.output_prefix}/${analysis_type_name}_split/
+          UNSPLIT : ${params.output_prefix}/${analysis_type_name}_unsplit/
         ========================================
         """
         .stripIndent()
