@@ -1,0 +1,136 @@
+# GraphPanGWAS Pipeline Parameters
+# Copy this file and customize for your analysis
+# Usage: nextflow run main.nf -params-file my_params.yaml -profile slurm
+
+##############################################################################
+# REQUIRED PARAMETERS
+##############################################################################
+
+# Population sample list file
+population_list: "532rice.list"
+
+# Directory containing phenotype TSV files
+phenotypes_dir: "./phenotypes/532rice"
+
+# Output directory prefix
+output_prefix: "532rice"
+
+# Analysis type name (used in output directory structure)
+analysis_type: "SNP_INDEL_SV_split"
+
+##############################################################################
+# VCF INPUT FILES (provide at least one)
+##############################################################################
+
+# SNP VCF file
+snp_vcf: "raw_vcf_dir/532rice.snp.impute.vcf"
+
+# INDEL VCF file
+indel_vcf: "raw_vcf_dir/532rice.indel.impute.vcf"
+
+# Structural variant VCF file
+sv_vcf: "raw_vcf_dir/532rice.pangenie.multi.impute.vcf"
+
+##############################################################################
+# GWAS PARAMETERS
+##############################################################################
+
+# Maximum number of parallel GWAS jobs
+max_parallel_gwas: 5
+
+# Minor allele frequency threshold
+maf_threshold: 0.01
+
+# Missing rate threshold
+miss_threshold: 0.2
+
+# Hardy-Weinberg equilibrium threshold
+hwe_threshold: 0
+
+##############################################################################
+# CLUMPING PARAMETERS
+##############################################################################
+
+# Clumping p-value threshold for index variants
+clump_p1: 1e-6
+
+# Clumping p-value threshold for clumped variants
+clump_p2: 0.05
+
+# Clumping LD r² threshold
+clump_r2: 0.1
+
+# Clumping window size (kb)
+clump_kb: 1000
+
+##############################################################################
+# TOOL PATHS (leave as default if tools are in PATH)
+##############################################################################
+
+# GEMMA executable path
+# gemma: "/path/to/gemma"
+
+# PLINK executable path
+# plink: "/path/to/plink"
+
+# GCTA executable path
+# gcta: "/path/to/gcta64"
+
+# bcftools executable path
+# bcftools: "/path/to/bcftools"
+
+# bgzip executable path
+# bgzip: "/path/to/bgzip"
+
+##############################################################################
+# COMPUTATIONAL RESOURCES
+##############################################################################
+
+# PLINK memory allocation (MB)
+plink_memory: 10000
+
+# GCTA thread count
+gcta_threads: 10
+
+# bcftools thread count
+bcftools_threads: 20
+
+# bgzip thread count
+bgzip_threads: 50
+
+##############################################################################
+# VCF PREPROCESSING PARAMETERS
+##############################################################################
+
+# Chromosome prefix for renaming (rice-specific)
+chr_prefix: "FaHC_P8_Nipponbare_TEJ#0#P8.Nipponbare.TEJ.Chr"
+
+# Number of chromosomes
+num_chromosomes: 12
+
+##############################################################################
+# OUTPUT DIRECTORIES
+##############################################################################
+
+# Temporary VCF directory
+tmp_vcf_dir: "tmp_vcf_dir"
+
+# Raw VCF directory
+raw_vcf_dir: "raw_vcf_dir"
+
+# Processed VCF directory
+vcf_dir: "vcf_dir"
+
+# Heritability output directory
+heritability_dir: "heritability"
+
+# Lead marker output directory
+lead_marker_dir: "Lead_marker"
+
+##############################################################################
+# OPTIONAL FEATURES
+##############################################################################
+
+# Generate Manhattan plots (requires R with CMplot)
+# generate_plots: false
+

@@ -1,0 +1,73 @@
+# Nextflow work directories
+work/
+.nextflow/
+.nextflow.*
+
+# Results and output directories
+results/
+*_cache/
+tmp_vcf_dir/
+vcf_dir/
+raw_vcf_dir/
+hertiability/
+heritability/
+Lead_marker/
+LD_marker/
+
+# Specific output prefixes (adjust based on your runs)
+532rice/
+698rice/
+1171rice/
+
+# Log files
+*.log
+*.log.*
+trace.txt
+timeline.html
+report.html
+
+# Phenotype data (optional - uncomment if you want to exclude)
+# phenotypes/
+
+# VCF files (large data files)
+*.vcf
+*.vcf.gz
+*.vcf.idx
+*.tbi
+*.bam
+*.bam.bai
+
+# Sample lists (optional - uncomment if sensitive)
+# *.list
+
+# Temporary files
+*.tmp
+*.temp
+*~
+.DS_Store
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# R files
+.Rhistory
+.RData
+.Rproj.user
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Slurm output files
+slurm-*.out
+*.out
+
+# Test and validation outputs
+VCF_PREPROCESSING_OPTIMIZATION_SUMMARY.txt
+NEXTFLOW_FILES_SUMMARY.txt
