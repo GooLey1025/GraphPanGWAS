@@ -9,8 +9,35 @@
 ========================================================================================
 */
 
-process PREPROCESS_PHENOTYPE {
-    tag "${phenotype.baseName}"
+process PREPROCESS_PHENOTYPE_SPLIT {
+    tag "${phenotype.baseName}_split"
+    label 'process_single'
+    
+    input:
+    tuple path(vcf), path(phenotype), path(population_list)
+    
+    output:
+    tuple path(vcf), path("processed_${phenotype.name}"), path(population_list), emit: preprocessed
+    
+    script:
+    """
+    ${params.python3} ${projectDir}/scripts/process_phenotype.py \\
+        ${population_list} \\
+        ${phenotype} \\
+        sorted_${phenotype.name}
+    
+    # Add first column as FID
+    ${params.awk} '{printf "%s", \$1; for(i=1; i<=NF; i++) printf "\\t%s", \$i; print "";}' \\
+        sorted_${phenotype.name} > tmp_${phenotype.name}.pre_plink.csv
+    
+    # Format header with FID and IID
+    ${params.awk} 'BEGIN {FS="\\t"; OFS="\\t"} NR==1 {\$1="FID"; \$2="IID"} {print}' \\
+        tmp_${phenotype.name}.pre_plink.csv > processed_${phenotype.name}
+    """
+}
+
+process PREPROCESS_PHENOTYPE_UNSPLIT {
+    tag "${phenotype.baseName}_unsplit"
     label 'process_single'
     
     input:
@@ -196,13 +223,42 @@ process GCTA_HERITABILITY {
 ========================================================================================
 */
 
-workflow GWAS_ANALYSIS {
+workflow GWAS_ANALYSIS_SPLIT {
     take:
     gwas_input  // tuple(vcf, phenotype, population_list)
     
     main:
     // Preprocess phenotype files
-    preprocessed = PREPROCESS_PHENOTYPE(gwas_input)
+    preprocessed = PREPROCESS_PHENOTYPE_SPLIT(gwas_input)
+    
+    // Convert VCF to PLINK binary format
+    plink_files = PLINK_VCF_CONVERSION(preprocessed.preprocessed)
+    
+    // Calculate kinship matrix with GEMMA
+    kinship = GEMMA_KINSHIP(plink_files.plink_files)
+    
+    // Run GEMMA LMM association
+    association = GEMMA_LMM_ASSOCIATION(kinship.kinship)
+    
+    // Perform LD clumping with PLINK
+    clumped = PLINK_CLUMPING(association.association)
+    
+    // Estimate heritability with GCTA
+    heritability = GCTA_HERITABILITY(association.association)
+    
+    emit:
+    assoc_files = association.association
+    clumped_files = clumped.clumped
+    hsq_files = heritability.heritability
+}
+
+workflow GWAS_ANALYSIS_UNSPLIT {
+    take:
+    gwas_input  // tuple(vcf, phenotype, population_list)
+    
+    main:
+    // Preprocess phenotype files
+    preprocessed = PREPROCESS_PHENOTYPE_UNSPLIT(gwas_input)
     
     // Convert VCF to PLINK binary format
     plink_files = PLINK_VCF_CONVERSION(preprocessed.preprocessed)

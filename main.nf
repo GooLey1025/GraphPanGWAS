@@ -32,7 +32,8 @@ log.info """\
 
 // Import modules
 include { VCF_PREPROCESSING } from './modules/vcf_preprocessing'
-include { GWAS_ANALYSIS } from './modules/gwas'
+include { GWAS_ANALYSIS_SPLIT } from './modules/gwas'
+include { GWAS_ANALYSIS_UNSPLIT } from './modules/gwas'
 include { EXTRACT_HERITABILITY } from './modules/postprocessing'
 include { EXTRACT_LEAD_MARKERS } from './modules/postprocessing'
 
@@ -98,7 +99,7 @@ workflow {
         .combine(phenotype_files)
         .combine(population_list_ch)
     
-    gwas_results_split = GWAS_ANALYSIS(
+    gwas_results_split = GWAS_ANALYSIS_SPLIT(
         gwas_input_split.map { vcf, pheno, list -> tuple(vcf, pheno, list) }
     )
     
@@ -120,7 +121,7 @@ workflow {
         .combine(phenotype_files)
         .combine(population_list_ch)
     
-    gwas_results_unsplit = GWAS_ANALYSIS(
+    gwas_results_unsplit = GWAS_ANALYSIS_UNSPLIT(
         gwas_input_unsplit.map { vcf, pheno, list -> tuple(vcf, pheno, list) }
     )
     
