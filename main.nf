@@ -86,19 +86,19 @@ workflow {
         .combine(phenotype_files)
         .combine(population_list_ch)
     
-    GWAS_ANALYSIS_SPLIT: GWAS_ANALYSIS(
+    gwas_results_split = GWAS_ANALYSIS(
         gwas_input_split.map { vcf, pheno, list -> tuple(vcf, pheno, list) }
     )
     
     // Post-processing for SPLIT
     EXTRACT_HERITABILITY(
-        GWAS_ANALYSIS_SPLIT.out.hsq_files.collect(),
+        gwas_results_split.hsq_files.collect(),
         params.output_prefix,
         "${params.analysis_type}_split"
     )
     
     EXTRACT_LEAD_MARKERS(
-        GWAS_ANALYSIS_SPLIT.out.clumped_files.collect(),
+        gwas_results_split.clumped_files.collect(),
         params.output_prefix,
         "${params.analysis_type}_split"
     )
@@ -108,19 +108,19 @@ workflow {
         .combine(phenotype_files)
         .combine(population_list_ch)
     
-    GWAS_ANALYSIS_UNSPLIT: GWAS_ANALYSIS(
+    gwas_results_unsplit = GWAS_ANALYSIS(
         gwas_input_unsplit.map { vcf, pheno, list -> tuple(vcf, pheno, list) }
     )
     
     // Post-processing for UNSPLIT
     EXTRACT_HERITABILITY(
-        GWAS_ANALYSIS_UNSPLIT.out.hsq_files.collect(),
+        gwas_results_unsplit.hsq_files.collect(),
         params.output_prefix,
         "${params.analysis_type}_unsplit"
     )
     
     EXTRACT_LEAD_MARKERS(
-        GWAS_ANALYSIS_UNSPLIT.out.clumped_files.collect(),
+        gwas_results_unsplit.clumped_files.collect(),
         params.output_prefix,
         "${params.analysis_type}_unsplit"
     )
