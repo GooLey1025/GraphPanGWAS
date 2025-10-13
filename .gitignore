@@ -2,7 +2,7 @@
 work/
 .nextflow/
 .nextflow.*
-
+.phenotypes
 # Results and output directories
 results/
 *_cache/
