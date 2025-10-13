@@ -252,27 +252,55 @@ process MERGE_VCF_FILES_SPLIT {
     publishDir "${params.vcf_dir}", mode: 'copy'
     
     input:
-    path vcf_files
+    path snp_vcf
+    path indel_vcf
+    path sv_vcf
     val analysis_type
     
     output:
     path "merged.${analysis_type}_split.vcf", emit: merged_vcf
     
     script:
-    def vcf_list = vcf_files.collect{ it.toString() }.join(' ')
     """
-    # Sort each VCF file
-    for vcf in ${vcf_list}; do
-        ${params.bcftools} sort "\${vcf}" > "\${vcf}.sorted"
-        ${params.bgzip} -c -@ ${task.cpus} "\${vcf}.sorted" > "\${vcf}.sorted.gz"
-        ${params.bcftools} index -f --tbi --threads ${task.cpus} "\${vcf}.sorted.gz"
-    done
+    # Create tmp directory for intermediate files
+    mkdir -p tmp_vcf_dir
     
-    # Create list of sorted VCF files
-    ls *.sorted.gz > vcf_list.txt
+    # Determine which files to merge based on analysis_type
+    vcf_files_to_merge=""
+    
+    if [[ "${analysis_type}" == *"SNP"* ]]; then
+        if [ -f "${snp_vcf}" ]; then
+            echo "Processing SNP file: ${snp_vcf}"
+            ${params.bcftools} sort "${snp_vcf}" -o "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf})"
+            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf})" > "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz"
+            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz"
+            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz"
+        fi
+    fi
+    
+    if [[ "${analysis_type}" == *"INDEL"* ]]; then
+        if [ -f "${indel_vcf}" ]; then
+            echo "Processing INDEL file: ${indel_vcf}"
+            ${params.bcftools} sort "${indel_vcf}" -o "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf})"
+            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf})" > "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz"
+            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz"
+            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz"
+        fi
+    fi
+    
+    if [[ "${analysis_type}" == *"SV"* ]]; then
+        if [ -f "${sv_vcf}" ]; then
+            echo "Processing SV file: ${sv_vcf}"
+            ${params.bcftools} sort "${sv_vcf}" -o "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf})"
+            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf})" > "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf}).gz"
+            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf}).gz"
+            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf}).gz"
+        fi
+    fi
     
     # Merge VCF files
-    ${params.bcftools} concat -a -f vcf_list.txt -o merged.${analysis_type}_split.vcf
+    echo "Merging files: \${vcf_files_to_merge}"
+    ${params.bcftools} concat -a \${vcf_files_to_merge} -o merged.${analysis_type}_split.vcf
     """
 }
 
@@ -282,27 +310,55 @@ process MERGE_VCF_FILES_UNSPLIT {
     publishDir "${params.vcf_dir}", mode: 'copy'
     
     input:
-    path vcf_files
+    path snp_vcf
+    path indel_vcf
+    path sv_vcf
     val analysis_type
     
     output:
     path "merged.${analysis_type}_unsplit.vcf", emit: merged_vcf
     
     script:
-    def vcf_list = vcf_files.collect{ it.toString() }.join(' ')
     """
-    # Sort each VCF file
-    for vcf in ${vcf_list}; do
-        ${params.bcftools} sort "\${vcf}" > "\${vcf}.sorted"
-        ${params.bgzip} -c -@ ${task.cpus} "\${vcf}.sorted" > "\${vcf}.sorted.gz"
-        ${params.bcftools} index -f --tbi --threads ${task.cpus} "\${vcf}.sorted.gz"
-    done
+    # Create tmp directory for intermediate files
+    mkdir -p tmp_vcf_dir
     
-    # Create list of sorted VCF files
-    ls *.sorted.gz > vcf_list.txt
+    # Determine which files to merge based on analysis_type
+    vcf_files_to_merge=""
+    
+    if [[ "${analysis_type}" == *"SNP"* ]]; then
+        if [ -f "${snp_vcf}" ]; then
+            echo "Processing SNP file: ${snp_vcf}"
+            ${params.bcftools} sort "${snp_vcf}" -o "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf})"
+            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf})" > "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz"
+            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz"
+            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz"
+        fi
+    fi
+    
+    if [[ "${analysis_type}" == *"INDEL"* ]]; then
+        if [ -f "${indel_vcf}" ]; then
+            echo "Processing INDEL file: ${indel_vcf}"
+            ${params.bcftools} sort "${indel_vcf}" -o "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf})"
+            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf})" > "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz"
+            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz"
+            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz"
+        fi
+    fi
+    
+    if [[ "${analysis_type}" == *"SV"* ]]; then
+        if [ -f "${sv_vcf}" ]; then
+            echo "Processing SV file: ${sv_vcf}"
+            ${params.bcftools} sort "${sv_vcf}" -o "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf})"
+            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf})" > "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf}).gz"
+            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf}).gz"
+            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf}).gz"
+        fi
+    fi
     
     # Merge VCF files
-    ${params.bcftools} concat -a -f vcf_list.txt -o merged.${analysis_type}_unsplit.vcf
+    echo "Merging files: \${vcf_files_to_merge}"
+    ${params.bcftools} concat -a \${vcf_files_to_merge} -o merged.${analysis_type}_unsplit.vcf
     """
 }
 
@@ -321,35 +377,43 @@ workflow VCF_PREPROCESSING {
     
     main:
     // Process each VCF type if provided (generates both split and unsplit)
-    processed_split_vcfs = Channel.empty()
-    processed_unsplit_vcfs = Channel.empty()
+    snp_split_vcf = Channel.empty()
+    snp_unsplit_vcf = Channel.empty()
+    indel_split_vcf = Channel.empty()
+    indel_unsplit_vcf = Channel.empty()
+    sv_split_vcf = Channel.empty()
+    sv_unsplit_vcf = Channel.empty()
     
     if (params.snp_vcf) {
         snp_processed = PREPARE_SNP(snp_vcf_ch)
-        processed_split_vcfs = processed_split_vcfs.mix(snp_processed.split_vcf)
-        processed_unsplit_vcfs = processed_unsplit_vcfs.mix(snp_processed.unsplit_vcf)
+        snp_split_vcf = snp_processed.split_vcf
+        snp_unsplit_vcf = snp_processed.unsplit_vcf
     }
     
     if (params.indel_vcf) {
         indel_processed = PREPARE_INDEL(indel_vcf_ch)
-        processed_split_vcfs = processed_split_vcfs.mix(indel_processed.split_vcf)
-        processed_unsplit_vcfs = processed_unsplit_vcfs.mix(indel_processed.unsplit_vcf)
+        indel_split_vcf = indel_processed.split_vcf
+        indel_unsplit_vcf = indel_processed.unsplit_vcf
     }
     
     if (params.sv_vcf) {
         sv_processed = PREPARE_SV(sv_vcf_ch)
-        processed_split_vcfs = processed_split_vcfs.mix(sv_processed.split_vcf)
-        processed_unsplit_vcfs = processed_unsplit_vcfs.mix(sv_processed.unsplit_vcf)
+        sv_split_vcf = sv_processed.split_vcf
+        sv_unsplit_vcf = sv_processed.unsplit_vcf
     }
     
-    // Merge both split and unsplit VCF files (always generate both)
+    // Merge VCF files based on analysis_type
     merged_split_vcf = MERGE_VCF_FILES_SPLIT(
-        processed_split_vcfs.collect(),
+        snp_split_vcf,
+        indel_split_vcf,
+        sv_split_vcf,
         analysis_type
     )
     
     merged_unsplit_vcf = MERGE_VCF_FILES_UNSPLIT(
-        processed_unsplit_vcfs.collect(),
+        snp_unsplit_vcf,
+        indel_unsplit_vcf,
+        sv_unsplit_vcf,
         analysis_type
     )
     
