@@ -232,7 +232,7 @@ workflow GWAS_ANALYSIS_SPLIT {
     preprocessed = PREPROCESS_PHENOTYPE_SPLIT(gwas_input)
     
     // Convert VCF to PLINK binary format
-    plink_files = PLINK_VCF_CONVERSION(preprocessed.preprocessed)
+    plink_files = PLINK_VCF_CONVERSION(preprocessed)
     
     // Calculate kinship matrix with GEMMA
     kinship = GEMMA_KINSHIP(plink_files.plink_files)
@@ -261,7 +261,7 @@ workflow GWAS_ANALYSIS_UNSPLIT {
     preprocessed = PREPROCESS_PHENOTYPE_UNSPLIT(gwas_input)
     
     // Convert VCF to PLINK binary format
-    plink_files = PLINK_VCF_CONVERSION(preprocessed.preprocessed)
+    plink_files = PLINK_VCF_CONVERSION(preprocessed)
     
     // Calculate kinship matrix with GEMMA
     kinship = GEMMA_KINSHIP(plink_files.plink_files)
