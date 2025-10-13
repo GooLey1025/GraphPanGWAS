@@ -164,7 +164,7 @@ process PLINK_CLUMPING {
     tuple val(phenotype_name), path(bed), path(bim), path(fam), path(assoc), path(phenotype)
     
     output:
-    tuple val(phenotype_name), path("${phenotype_name}.clumped"), emit: clumped optional true
+    tuple val(phenotype_name), path("${phenotype_name}.clumped"), emit: clumped
     
     script:
     """
