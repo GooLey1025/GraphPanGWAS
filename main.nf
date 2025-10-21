@@ -22,7 +22,6 @@ log.info """\
     SV VCF             : ${params.sv_vcf}
     Phenotypes Dir     : ${params.phenotypes_dir}
     Output Prefix      : ${params.output_prefix}
-    Base Analysis Type : ${params.analysis_type}
     Max Parallel GWAS  : ${params.max_parallel_gwas}
     
     Mode: BOTH split and unsplit analyses will be run
@@ -34,10 +33,10 @@ log.info """\
 include { VCF_PREPROCESSING } from './modules/vcf_preprocessing'
 include { GWAS_ANALYSIS_SPLIT } from './modules/gwas'
 include { GWAS_ANALYSIS_UNSPLIT } from './modules/gwas'
-include { EXTRACT_HERITABILITY_SPLIT } from './modules/postprocessing'
-include { EXTRACT_HERITABILITY_UNSPLIT } from './modules/postprocessing'
-include { EXTRACT_LEAD_MARKERS_SPLIT } from './modules/postprocessing'
-include { EXTRACT_LEAD_MARKERS_UNSPLIT } from './modules/postprocessing'
+include { EXTRACT_HERITABILITY as EXTRACT_HERITABILITY_SPLIT } from './modules/postprocessing'
+include { EXTRACT_HERITABILITY as EXTRACT_HERITABILITY_UNSPLIT } from './modules/postprocessing'
+include { EXTRACT_LEAD_MARKERS as EXTRACT_LEAD_MARKERS_SPLIT } from './modules/postprocessing'
+include { EXTRACT_LEAD_MARKERS as EXTRACT_LEAD_MARKERS_UNSPLIT } from './modules/postprocessing'
 
 /*
 ========================================================================================
@@ -52,25 +51,13 @@ workflow {
     indel_vcf_ch = params.indel_vcf ? Channel.fromPath(params.indel_vcf, checkIfExists: true) : Channel.empty()
     sv_vcf_ch = params.sv_vcf ? Channel.fromPath(params.sv_vcf, checkIfExists: true) : Channel.empty()
     population_list_ch = Channel.fromPath(params.population_list, checkIfExists: true)
-    
-    // Determine the analysis type name based on available VCFs
-    def analysis_type_name = params.analysis_type
-    if (params.analysis_type == 'all') {
-        // Auto-generate name based on available VCFs
-        def vcf_types = []
-        if (params.snp_vcf) vcf_types.add('SNP')
-        if (params.indel_vcf) vcf_types.add('INDEL') 
-        if (params.sv_vcf) vcf_types.add('SV')
-        analysis_type_name = vcf_types.join('_')
-        log.info "Auto-detected analysis type: ${analysis_type_name}"
-    }
-    
+    ref_fa_ch = Channel.fromPath(params.ref_fa, checkIfExists: true)
     // VCF Preprocessing (generates both split and unsplit for all available types)
     VCF_PREPROCESSING(
         snp_vcf_ch,
         indel_vcf_ch,
         sv_vcf_ch,
-        analysis_type_name
+        ref_fa_ch
     )
     
     // Validate and collect phenotype files
@@ -78,10 +65,6 @@ workflow {
         .fromPath("${params.phenotypes_dir}/*.tsv", checkIfExists: true)
         .map { file ->
             def lines = file.readLines()
-            if (lines.size() < 2) {
-                log.error "ERROR: ${file.name} has less than 2 lines"
-                System.exit(1)
-            }
             def header = lines[0].split('\t')
             if (header.size() != 2) {
                 log.error "ERROR: ${file.name} does not have exactly 2 columns (has ${header.size()} columns)"
@@ -105,17 +88,23 @@ workflow {
         gwas_input_split.map { vcf, pheno, list -> tuple(vcf, pheno, list) }
     )
     
-    // Post-processing for SPLIT
+    // Post-processing for SPLIT - group by way
+    hsq_by_way_split = gwas_results_split.hsq_files
+        .map { pheno_name, hsq, way -> tuple(way, hsq) }
+        .groupTuple()
+    
+    clumped_by_way_split = gwas_results_split.clumped_files
+        .map { pheno_name, clumped, way -> tuple(way, clumped) }
+        .groupTuple()
+    
     EXTRACT_HERITABILITY_SPLIT(
-        gwas_results_split.hsq_files.collect(),
-        params.output_prefix,
-        analysis_type_name
+        hsq_by_way_split,
+        params.output_prefix
     )
     
     EXTRACT_LEAD_MARKERS_SPLIT(
-        gwas_results_split.clumped_files.collect(),
-        params.output_prefix,
-        analysis_type_name
+        clumped_by_way_split,
+        params.output_prefix
     )
     
     // ===== Run GWAS on UNSPLIT version =====
@@ -127,17 +116,23 @@ workflow {
         gwas_input_unsplit.map { vcf, pheno, list -> tuple(vcf, pheno, list) }
     )
     
-    // Post-processing for UNSPLIT
+    // Post-processing for UNSPLIT - group by way
+    hsq_by_way_unsplit = gwas_results_unsplit.hsq_files
+        .map { pheno_name, hsq, way -> tuple(way, hsq) }
+        .groupTuple()
+    
+    clumped_by_way_unsplit = gwas_results_unsplit.clumped_files
+        .map { pheno_name, clumped, way -> tuple(way, clumped) }
+        .groupTuple()
+    
     EXTRACT_HERITABILITY_UNSPLIT(
-        gwas_results_unsplit.hsq_files.collect(),
-        params.output_prefix,
-        analysis_type_name
+        hsq_by_way_unsplit,
+        params.output_prefix
     )
     
     EXTRACT_LEAD_MARKERS_UNSPLIT(
-        gwas_results_unsplit.clumped_files.collect(),
-        params.output_prefix,
-        analysis_type_name
+        clumped_by_way_unsplit,
+        params.output_prefix
     )
 }
 
@@ -153,7 +148,6 @@ workflow.onComplete {
         Pipeline completed!
         Status    : ${workflow.success ? 'SUCCESS' : 'FAILED'}
         Duration  : ${workflow.duration}
-        Analysis  : ${analysis_type_name}
         
         Results:
           SPLIT   : ${params.output_prefix}/${analysis_type_name}_split/

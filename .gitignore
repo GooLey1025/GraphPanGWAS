@@ -71,3 +71,6 @@ slurm-*.out
 # Test and validation outputs
 VCF_PREPROCESSING_OPTIMIZATION_SUMMARY.txt
 NEXTFLOW_FILES_SUMMARY.txt
+
+#
+GenomeAnalysisTK-3.8-1-0-gf15c1c3ef

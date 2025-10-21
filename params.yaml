@@ -15,8 +15,8 @@ phenotypes_dir: "./phenotypes/698rice"
 # Output directory prefix
 output_prefix: "698rice"
 
-# Analysis type name (used in output directory structure)
-analysis_type: "SNP_INDEL_SV_split"
+# Reference genome fasta file
+ref_fa: "nip_rename.fa"
 
 ##############################################################################
 # VCF INPUT FILES (provide at least one)
@@ -36,7 +36,7 @@ sv_vcf: "raw_vcf_dir/698rice.pangenie.multi.impute.vcf"
 ##############################################################################
 
 # Maximum number of parallel GWAS jobs
-max_parallel_gwas: 15
+max_parallel_gwas: 24
 
 # Minor allele frequency threshold
 maf_threshold: 0.01

@@ -11,7 +11,7 @@
 */
 
 process PREPARE_SNP {
-    tag "SNP"
+    tag "PREPARE_SNP"
     label 'process_high'
     publishDir "${params.vcf_dir}", mode: 'copy', pattern: "SNP.*.vcf"
     
@@ -163,6 +163,7 @@ process PREPARE_SV {
     
     input:
     path sv_vcf
+    path ref_fa
     
     output:
     path "SV.split.${sv_vcf}", emit: split_vcf
@@ -189,16 +190,15 @@ EOF
     # Rename chromosomes (shared step)
     ${params.bcftools} annotate --rename-chrs sv_chr_map.txt --threads ${task.cpus} \\
         -Oz -o renamed_${sv_vcf}.gz ${sv_vcf}
-    
+
+    # left-align the vcf
+    ${params.bcftools} norm -f ${ref_fa} -Oz -o LeftAligned_renamed_${sv_vcf}.gz renamed_${sv_vcf}.gz
+
     # SPLIT version: normalize (split multi-allelic sites)
-    ${params.bcftools} norm -m -both renamed_${sv_vcf}.gz -o norm_renamed_${sv_vcf}
+    ${params.bcftools} norm -m -both LeftAligned_renamed_${sv_vcf}.gz -o norm_LeftAligned_renamed_${sv_vcf}
     
-    # Filter SV for SPLIT version (if filter script exists)
-    if [ -f "${projectDir}/scripts/sv_filter.sh" ]; then
-        bash ${projectDir}/scripts/sv_filter.sh norm_renamed_${sv_vcf} sv.split.temp.${sv_vcf}
-    else
-        cp norm_renamed_${sv_vcf} sv.split.temp.${sv_vcf}
-    fi
+    # Filter SV for SPLIT version 
+    bash ${projectDir}/scripts/sv_filter.sh norm_LeftAligned_renamed_${sv_vcf} sv.split.temp.${sv_vcf}
     
     # Assign IDs for SPLIT version
     ${params.awk} 'BEGIN{OFS="\\t"} 
@@ -218,14 +218,11 @@ EOF
     }' sv.split.temp.${sv_vcf} > SV.split.${sv_vcf}
     
     # UNSPLIT version: extract from gzipped renamed file
-    ${params.bcftools} view renamed_${sv_vcf}.gz > renamed_${sv_vcf}
+    ${params.bcftools} view LeftAligned_renamed_${sv_vcf}.gz > LeftAligned_renamed_${sv_vcf}
     
-    # Filter SV for UNSPLIT version (if filter script exists)
-    if [ -f "${projectDir}/scripts/sv_filter.sh" ]; then
-        bash ${projectDir}/scripts/sv_filter.sh renamed_${sv_vcf} sv.unsplit.temp.${sv_vcf}
-    else
-        cp renamed_${sv_vcf} sv.unsplit.temp.${sv_vcf}
-    fi
+    # Filter SV for UNSPLIT version 
+    bash ${projectDir}/scripts/sv_filter.sh LeftAligned_renamed_${sv_vcf} sv.unsplit.temp.${sv_vcf}
+
     
     # Assign IDs for UNSPLIT version (no normalization)
     ${params.awk} 'BEGIN{OFS="\\t"} 
@@ -246,78 +243,52 @@ EOF
     """
 }
 
-process MERGE_VCF_FILES_SPLIT {
-    tag "${analysis_type}_split"
+
+process MERGE_SNP_INDEL_SPLIT {
+    tag "SNP_INDEL_split"
     label 'process_very_high'
     publishDir "${params.vcf_dir}", mode: 'copy'
     
     input:
     path snp_vcf
     path indel_vcf
-    path sv_vcf
-    val analysis_type
     
     output:
-    path "merged.${analysis_type}_split.vcf", emit: merged_vcf
+    path "SNP_INDEL.split.*.vcf", emit: merged_vcf
     
     script:
+    def output_parts = []
+    output_parts.add(snp_vcf.name.replaceFirst(/^SNP\.split\./, ''))
+    output_parts.add(indel_vcf.name.replaceFirst(/^INDEL\.split\./, ''))
+    def output_name = "SNP_INDEL.split." + output_parts.join('.')
+    
     """
     # Create tmp directory for intermediate files
     mkdir -p tmp_vcf_dir
     
-    # Determine which files to merge based on analysis_type
-    vcf_files_to_merge=""
+    # Process SNP file
+    echo "Processing SNP file: ${snp_vcf}"
+    ${params.bcftools} sort "${snp_vcf}" -o "tmp_vcf_dir/SNP.split.pos_sorted.\$(basename ${snp_vcf})"
+    ${params.bcftools} query -l "tmp_vcf_dir/SNP.split.pos_sorted.\$(basename ${snp_vcf})" | sort > "tmp_vcf_dir/snp_samples.txt"
+    ${params.bcftools} view -S "tmp_vcf_dir/snp_samples.txt" "tmp_vcf_dir/SNP.split.pos_sorted.\$(basename ${snp_vcf})" -o "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf})"
+    ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf})" > "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz"
+    ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz"
     
-    if [[ "${analysis_type}" == *"SNP"* ]]; then
-        if [ -f "${snp_vcf}" ]; then
-            echo "Processing SNP file: ${snp_vcf}"
-            # Sort by position first
-            ${params.bcftools} sort "${snp_vcf}" -o "tmp_vcf_dir/SNP.split.pos_sorted.\$(basename ${snp_vcf})"
-            # Sort samples alphabetically to ensure consistent order across VCFs
-            ${params.bcftools} query -l "tmp_vcf_dir/SNP.split.pos_sorted.\$(basename ${snp_vcf})" | sort > "tmp_vcf_dir/snp_samples.txt"
-            ${params.bcftools} view -S "tmp_vcf_dir/snp_samples.txt" "tmp_vcf_dir/SNP.split.pos_sorted.\$(basename ${snp_vcf})" -o "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf})"
-            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf})" > "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz"
-            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz"
-            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz"
-        fi
-    fi
+    # Process INDEL file
+    echo "Processing INDEL file: ${indel_vcf}"
+    ${params.bcftools} sort "${indel_vcf}" -o "tmp_vcf_dir/INDEL.split.pos_sorted.\$(basename ${indel_vcf})"
+    ${params.bcftools} query -l "tmp_vcf_dir/INDEL.split.pos_sorted.\$(basename ${indel_vcf})" | sort > "tmp_vcf_dir/indel_samples.txt"
+    ${params.bcftools} view -S "tmp_vcf_dir/indel_samples.txt" "tmp_vcf_dir/INDEL.split.pos_sorted.\$(basename ${indel_vcf})" -o "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf})"
+    ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf})" > "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz"
+    ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz"
     
-    if [[ "${analysis_type}" == *"INDEL"* ]]; then
-        if [ -f "${indel_vcf}" ]; then
-            echo "Processing INDEL file: ${indel_vcf}"
-            # Sort by position first
-            ${params.bcftools} sort "${indel_vcf}" -o "tmp_vcf_dir/INDEL.split.pos_sorted.\$(basename ${indel_vcf})"
-            # Sort samples alphabetically to ensure consistent order across VCFs
-            ${params.bcftools} query -l "tmp_vcf_dir/INDEL.split.pos_sorted.\$(basename ${indel_vcf})" | sort > "tmp_vcf_dir/indel_samples.txt"
-            ${params.bcftools} view -S "tmp_vcf_dir/indel_samples.txt" "tmp_vcf_dir/INDEL.split.pos_sorted.\$(basename ${indel_vcf})" -o "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf})"
-            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf})" > "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz"
-            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz"
-            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz"
-        fi
-    fi
-    
-    if [[ "${analysis_type}" == *"SV"* ]]; then
-        if [ -f "${sv_vcf}" ]; then
-            echo "Processing SV file: ${sv_vcf}"
-            # Sort by position first
-            ${params.bcftools} sort "${sv_vcf}" -o "tmp_vcf_dir/SV.split.pos_sorted.\$(basename ${sv_vcf})"
-            # Sort samples alphabetically to ensure consistent order across VCFs
-            ${params.bcftools} query -l "tmp_vcf_dir/SV.split.pos_sorted.\$(basename ${sv_vcf})" | sort > "tmp_vcf_dir/sv_samples.txt"
-            ${params.bcftools} view -S "tmp_vcf_dir/sv_samples.txt" "tmp_vcf_dir/SV.split.pos_sorted.\$(basename ${sv_vcf})" -o "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf})"
-            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf})" > "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf}).gz"
-            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf}).gz"
-            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf}).gz"
-        fi
-    fi
-    
-    # Merge VCF files
-    echo "Merging files: \${vcf_files_to_merge}"
-    ${params.bcftools} concat -a \${vcf_files_to_merge} -o merged.${analysis_type}_split.vcf
+    # Merge files
+    ${params.bcftools} concat -a tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz -o ${output_name}
     """
 }
 
-process MERGE_VCF_FILES_UNSPLIT {
-    tag "${analysis_type}_unsplit"
+process MERGE_SNP_INDEL_SV_SPLIT {
+    tag "SNP_INDEL_SV_split"
     label 'process_very_high'
     publishDir "${params.vcf_dir}", mode: 'copy'
     
@@ -325,64 +296,143 @@ process MERGE_VCF_FILES_UNSPLIT {
     path snp_vcf
     path indel_vcf
     path sv_vcf
-    val analysis_type
     
     output:
-    path "merged.${analysis_type}_unsplit.vcf", emit: merged_vcf
+    path "SNP_INDEL_SV.split.*.vcf", emit: merged_vcf
     
     script:
+    def output_parts = []
+    output_parts.add(snp_vcf.name.replaceFirst(/^SNP\.split\./, ''))
+    output_parts.add(indel_vcf.name.replaceFirst(/^INDEL\.split\./, ''))
+    output_parts.add(sv_vcf.name.replaceFirst(/^SV\.split\./, ''))
+    def output_name = "SNP_INDEL_SV.split." + output_parts.join('.')
+    
     """
     # Create tmp directory for intermediate files
     mkdir -p tmp_vcf_dir
     
-    # Determine which files to merge based on analysis_type
-    vcf_files_to_merge=""
+    # Process SNP file
+    echo "Processing SNP file: ${snp_vcf}"
+    ${params.bcftools} sort "${snp_vcf}" -o "tmp_vcf_dir/SNP.split.pos_sorted.\$(basename ${snp_vcf})"
+    ${params.bcftools} query -l "tmp_vcf_dir/SNP.split.pos_sorted.\$(basename ${snp_vcf})" | sort > "tmp_vcf_dir/snp_samples.txt"
+    ${params.bcftools} view -S "tmp_vcf_dir/snp_samples.txt" "tmp_vcf_dir/SNP.split.pos_sorted.\$(basename ${snp_vcf})" -o "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf})"
+    ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf})" > "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz"
+    ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz"
     
-    if [[ "${analysis_type}" == *"SNP"* ]]; then
-        if [ -f "${snp_vcf}" ]; then
-            echo "Processing SNP file: ${snp_vcf}"
-            # Sort by position first
-            ${params.bcftools} sort "${snp_vcf}" -o "tmp_vcf_dir/SNP.unsplit.pos_sorted.\$(basename ${snp_vcf})"
-            # Sort samples alphabetically to ensure consistent order across VCFs
-            ${params.bcftools} query -l "tmp_vcf_dir/SNP.unsplit.pos_sorted.\$(basename ${snp_vcf})" | sort > "tmp_vcf_dir/snp_samples.txt"
-            ${params.bcftools} view -S "tmp_vcf_dir/snp_samples.txt" "tmp_vcf_dir/SNP.unsplit.pos_sorted.\$(basename ${snp_vcf})" -o "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf})"
-            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf})" > "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz"
-            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz"
-            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz"
-        fi
-    fi
+    # Process INDEL file
+    echo "Processing INDEL file: ${indel_vcf}"
+    ${params.bcftools} sort "${indel_vcf}" -o "tmp_vcf_dir/INDEL.split.pos_sorted.\$(basename ${indel_vcf})"
+    ${params.bcftools} query -l "tmp_vcf_dir/INDEL.split.pos_sorted.\$(basename ${indel_vcf})" | sort > "tmp_vcf_dir/indel_samples.txt"
+    ${params.bcftools} view -S "tmp_vcf_dir/indel_samples.txt" "tmp_vcf_dir/INDEL.split.pos_sorted.\$(basename ${indel_vcf})" -o "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf})"
+    ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf})" > "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz"
+    ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz"
     
-    if [[ "${analysis_type}" == *"INDEL"* ]]; then
-        if [ -f "${indel_vcf}" ]; then
-            echo "Processing INDEL file: ${indel_vcf}"
-            # Sort by position first
-            ${params.bcftools} sort "${indel_vcf}" -o "tmp_vcf_dir/INDEL.unsplit.pos_sorted.\$(basename ${indel_vcf})"
-            # Sort samples alphabetically to ensure consistent order across VCFs
-            ${params.bcftools} query -l "tmp_vcf_dir/INDEL.unsplit.pos_sorted.\$(basename ${indel_vcf})" | sort > "tmp_vcf_dir/indel_samples.txt"
-            ${params.bcftools} view -S "tmp_vcf_dir/indel_samples.txt" "tmp_vcf_dir/INDEL.unsplit.pos_sorted.\$(basename ${indel_vcf})" -o "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf})"
-            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf})" > "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz"
-            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz"
-            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz"
-        fi
-    fi
+    # Process SV file
+    echo "Processing SV file: ${sv_vcf}"
+    ${params.bcftools} sort "${sv_vcf}" -o "tmp_vcf_dir/SV.split.pos_sorted.\$(basename ${sv_vcf})"
+    ${params.bcftools} query -l "tmp_vcf_dir/SV.split.pos_sorted.\$(basename ${sv_vcf})" | sort > "tmp_vcf_dir/sv_samples.txt"
+    ${params.bcftools} view -S "tmp_vcf_dir/sv_samples.txt" "tmp_vcf_dir/SV.split.pos_sorted.\$(basename ${sv_vcf})" -o "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf})"
+    ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf})" > "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf}).gz"
+    ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf}).gz"
     
-    if [[ "${analysis_type}" == *"SV"* ]]; then
-        if [ -f "${sv_vcf}" ]; then
-            echo "Processing SV file: ${sv_vcf}"
-            # Sort by position first
-            ${params.bcftools} sort "${sv_vcf}" -o "tmp_vcf_dir/SV.unsplit.pos_sorted.\$(basename ${sv_vcf})"
-            # Sort samples alphabetically to ensure consistent order across VCFs
-            ${params.bcftools} query -l "tmp_vcf_dir/SV.unsplit.pos_sorted.\$(basename ${sv_vcf})" | sort > "tmp_vcf_dir/sv_samples.txt"
-            ${params.bcftools} view -S "tmp_vcf_dir/sv_samples.txt" "tmp_vcf_dir/SV.unsplit.pos_sorted.\$(basename ${sv_vcf})" -o "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf})"
-            ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf})" > "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf}).gz"
-            ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf}).gz"
-            vcf_files_to_merge="\${vcf_files_to_merge} tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf}).gz"
-        fi
-    fi
+    # Merge files
+    ${params.bcftools} concat -a tmp_vcf_dir/SNP.split.sorted.\$(basename ${snp_vcf}).gz tmp_vcf_dir/INDEL.split.sorted.\$(basename ${indel_vcf}).gz tmp_vcf_dir/SV.split.sorted.\$(basename ${sv_vcf}).gz -o ${output_name}
+    """
+}
+
+process MERGE_SNP_INDEL_UNSPLIT {
+    tag "SNP_INDEL_unsplit"
+    label 'process_very_high'
+    publishDir "${params.vcf_dir}", mode: 'copy'
     
-    # Merge VCF files
-    echo "Merging files: \${vcf_files_to_merge}"
-    ${params.bcftools} concat -a \${vcf_files_to_merge} -o merged.${analysis_type}_unsplit.vcf
+    input:
+    path snp_vcf
+    path indel_vcf
+    
+    output:
+    path "SNP_INDEL.unsplit.*.vcf", emit: merged_vcf
+    
+    script:
+    def output_parts = []
+    output_parts.add(snp_vcf.name.replaceFirst(/^SNP\.unsplit\./, ''))
+    output_parts.add(indel_vcf.name.replaceFirst(/^INDEL\.unsplit\./, ''))
+    def output_name = "SNP_INDEL.unsplit." + output_parts.join('.')
+    
+    """
+    # Create tmp directory for intermediate files
+    mkdir -p tmp_vcf_dir
+    
+    # Process SNP file
+    echo "Processing SNP file: ${snp_vcf}"
+    ${params.bcftools} sort "${snp_vcf}" -o "tmp_vcf_dir/SNP.unsplit.pos_sorted.\$(basename ${snp_vcf})"
+    ${params.bcftools} query -l "tmp_vcf_dir/SNP.unsplit.pos_sorted.\$(basename ${snp_vcf})" | sort > "tmp_vcf_dir/snp_samples.txt"
+    ${params.bcftools} view -S "tmp_vcf_dir/snp_samples.txt" "tmp_vcf_dir/SNP.unsplit.pos_sorted.\$(basename ${snp_vcf})" -o "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf})"
+    ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf})" > "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz"
+    ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz"
+    
+    # Process INDEL file
+    echo "Processing INDEL file: ${indel_vcf}"
+    ${params.bcftools} sort "${indel_vcf}" -o "tmp_vcf_dir/INDEL.unsplit.pos_sorted.\$(basename ${indel_vcf})"
+    ${params.bcftools} query -l "tmp_vcf_dir/INDEL.unsplit.pos_sorted.\$(basename ${indel_vcf})" | sort > "tmp_vcf_dir/indel_samples.txt"
+    ${params.bcftools} view -S "tmp_vcf_dir/indel_samples.txt" "tmp_vcf_dir/INDEL.unsplit.pos_sorted.\$(basename ${indel_vcf})" -o "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf})"
+    ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf})" > "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz"
+    ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz"
+    
+    # Merge files
+    ${params.bcftools} concat -a tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz -o ${output_name}
+    """
+}
+
+process MERGE_SNP_INDEL_SV_UNSPLIT {
+    tag "SNP_INDEL_SV_unsplit"
+    label 'process_very_high'
+    publishDir "${params.vcf_dir}", mode: 'copy'
+    
+    input:
+    path snp_vcf
+    path indel_vcf
+    path sv_vcf
+    
+    output:
+    path "SNP_INDEL_SV.unsplit.*.vcf", emit: merged_vcf
+    
+    script:
+    def output_parts = []
+    output_parts.add(snp_vcf.name.replaceFirst(/^SNP\.unsplit\./, ''))
+    output_parts.add(indel_vcf.name.replaceFirst(/^INDEL\.unsplit\./, ''))
+    output_parts.add(sv_vcf.name.replaceFirst(/^SV\.unsplit\./, ''))
+    def output_name = "SNP_INDEL_SV.unsplit." + output_parts.join('.')
+    
+    """
+    # Create tmp directory for intermediate files
+    mkdir -p tmp_vcf_dir
+    
+    # Process SNP file
+    echo "Processing SNP file: ${snp_vcf}"
+    ${params.bcftools} sort "${snp_vcf}" -o "tmp_vcf_dir/SNP.unsplit.pos_sorted.\$(basename ${snp_vcf})"
+    ${params.bcftools} query -l "tmp_vcf_dir/SNP.unsplit.pos_sorted.\$(basename ${snp_vcf})" | sort > "tmp_vcf_dir/snp_samples.txt"
+    ${params.bcftools} view -S "tmp_vcf_dir/snp_samples.txt" "tmp_vcf_dir/SNP.unsplit.pos_sorted.\$(basename ${snp_vcf})" -o "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf})"
+    ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf})" > "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz"
+    ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz"
+    
+    # Process INDEL file
+    echo "Processing INDEL file: ${indel_vcf}"
+    ${params.bcftools} sort "${indel_vcf}" -o "tmp_vcf_dir/INDEL.unsplit.pos_sorted.\$(basename ${indel_vcf})"
+    ${params.bcftools} query -l "tmp_vcf_dir/INDEL.unsplit.pos_sorted.\$(basename ${indel_vcf})" | sort > "tmp_vcf_dir/indel_samples.txt"
+    ${params.bcftools} view -S "tmp_vcf_dir/indel_samples.txt" "tmp_vcf_dir/INDEL.unsplit.pos_sorted.\$(basename ${indel_vcf})" -o "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf})"
+    ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf})" > "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz"
+    ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz"
+    
+    # Process SV file
+    echo "Processing SV file: ${sv_vcf}"
+    ${params.bcftools} sort "${sv_vcf}" -o "tmp_vcf_dir/SV.unsplit.pos_sorted.\$(basename ${sv_vcf})"
+    ${params.bcftools} query -l "tmp_vcf_dir/SV.unsplit.pos_sorted.\$(basename ${sv_vcf})" | sort > "tmp_vcf_dir/sv_samples.txt"
+    ${params.bcftools} view -S "tmp_vcf_dir/sv_samples.txt" "tmp_vcf_dir/SV.unsplit.pos_sorted.\$(basename ${sv_vcf})" -o "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf})"
+    ${params.bgzip} -c -@ ${task.cpus} "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf})" > "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf}).gz"
+    ${params.bcftools} index -f --tbi --threads ${task.cpus} "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf}).gz"
+    
+    # Merge files
+    ${params.bcftools} concat -a tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf}).gz -o ${output_name}
     """
 }
 
@@ -397,10 +447,10 @@ workflow VCF_PREPROCESSING {
     snp_vcf_ch
     indel_vcf_ch
     sv_vcf_ch
-    analysis_type
+    ref_fa
     
     main:
-    // Process each VCF type if provided (generates both split and unsplit)
+    // Step 1: PREPARE - Process each VCF type if provided (generates both split and unsplit)
     snp_split_vcf = Channel.empty()
     snp_unsplit_vcf = Channel.empty()
     indel_split_vcf = Channel.empty()
@@ -421,28 +471,45 @@ workflow VCF_PREPROCESSING {
     }
     
     if (params.sv_vcf) {
-        sv_processed = PREPARE_SV(sv_vcf_ch)
+        sv_processed = PREPARE_SV(sv_vcf_ch, ref_fa)
         sv_split_vcf = sv_processed.split_vcf
         sv_unsplit_vcf = sv_processed.unsplit_vcf
     }
     
-    // Merge VCF files based on analysis_type
-    merged_split_vcf = MERGE_VCF_FILES_SPLIT(
-        snp_split_vcf,
-        indel_split_vcf,
-        sv_split_vcf,
-        analysis_type
-    )
+    // Step 2: MERGE - Generate all 6 types of VCF files for GWAS
+    // Following the logic in run_pipeline.sh VCF_WAY_PAIRS
     
-    merged_unsplit_vcf = MERGE_VCF_FILES_UNSPLIT(
-        snp_unsplit_vcf,
-        indel_unsplit_vcf,
-        sv_unsplit_vcf,
-        analysis_type
-    )
+    // Create channels for different VCF combinations
+    all_split_vcfs = Channel.empty()
+    all_unsplit_vcfs = Channel.empty()
+    
+    // Type 1: SNP only (split and unsplit)
+    // No merge needed for single SNP file - directly use PREPARE_SNP output
+    if (params.snp_vcf) {
+        all_split_vcfs = all_split_vcfs.concat(snp_split_vcf)
+        all_unsplit_vcfs = all_unsplit_vcfs.concat(snp_unsplit_vcf)
+    }
+    
+    // Type 2: SNP_INDEL (merge SNP + INDEL, split and unsplit)
+    if (params.snp_vcf && params.indel_vcf) {
+        snp_indel_split_merged = MERGE_SNP_INDEL_SPLIT(snp_split_vcf, indel_split_vcf)
+        snp_indel_unsplit_merged = MERGE_SNP_INDEL_UNSPLIT(snp_unsplit_vcf, indel_unsplit_vcf)
+        
+        all_split_vcfs = all_split_vcfs.concat(snp_indel_split_merged.merged_vcf)
+        all_unsplit_vcfs = all_unsplit_vcfs.concat(snp_indel_unsplit_merged.merged_vcf)
+    }
+    
+    // Type 3: SNP_INDEL_SV (merge SNP + INDEL + SV, split and unsplit)
+    if (params.snp_vcf && params.indel_vcf && params.sv_vcf) {
+        snp_indel_sv_split_merged = MERGE_SNP_INDEL_SV_SPLIT(snp_split_vcf, indel_split_vcf, sv_split_vcf)
+        snp_indel_sv_unsplit_merged = MERGE_SNP_INDEL_SV_UNSPLIT(snp_unsplit_vcf, indel_unsplit_vcf, sv_unsplit_vcf)
+        
+        all_split_vcfs = all_split_vcfs.concat(snp_indel_sv_split_merged.merged_vcf)
+        all_unsplit_vcfs = all_unsplit_vcfs.concat(snp_indel_sv_unsplit_merged.merged_vcf)
+    }
     
     emit:
-    split_vcf = merged_split_vcf.merged_vcf
-    unsplit_vcf = merged_unsplit_vcf.merged_vcf
+    split_vcf = all_split_vcfs
+    unsplit_vcf = all_unsplit_vcfs
 }
 

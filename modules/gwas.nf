@@ -10,14 +10,14 @@
 */
 
 process PREPROCESS_PHENOTYPE_SPLIT {
-    tag "${phenotype.baseName}_split"
+    tag "${phenotype.baseName}_${way}_split"
     label 'process_single'
     
     input:
-    tuple path(vcf), path(phenotype), path(population_list)
+    tuple path(vcf), path(phenotype), path(population_list), val(way)
     
     output:
-    tuple path(vcf), path("processed_${phenotype.name}"), path(population_list), emit: preprocessed
+    tuple path(vcf), path("processed_${phenotype.name}"), path(population_list), val(way), emit: preprocessed
     
     script:
     """
@@ -37,14 +37,14 @@ process PREPROCESS_PHENOTYPE_SPLIT {
 }
 
 process PREPROCESS_PHENOTYPE_UNSPLIT {
-    tag "${phenotype.baseName}_unsplit"
+    tag "${phenotype.baseName}_${way}_unsplit"
     label 'process_single'
     
     input:
-    tuple path(vcf), path(phenotype), path(population_list)
+    tuple path(vcf), path(phenotype), path(population_list), val(way)
     
     output:
-    tuple path(vcf), path("processed_${phenotype.name}"), path(population_list), emit: preprocessed
+    tuple path(vcf), path("processed_${phenotype.name}"), path(population_list), val(way), emit: preprocessed
     
     script:
     """
@@ -64,18 +64,19 @@ process PREPROCESS_PHENOTYPE_UNSPLIT {
 }
 
 process PLINK_VCF_CONVERSION {
-    tag "${phenotype.baseName}"
+    tag "${phenotype.baseName}_${way}"
     label 'process_medium'
     
     input:
-    tuple path(vcf), path(phenotype), path(population_list)
+    tuple path(vcf), path(phenotype), path(population_list), val(way)
     
     output:
     tuple val("${phenotype.baseName}"), 
           path("${phenotype.baseName}.bed"), 
           path("${phenotype.baseName}.bim"), 
           path("${phenotype.baseName}.fam"),
-          path(phenotype), emit: plink_files
+          path(phenotype),
+          val(way), emit: plink_files
     
     script:
     """
@@ -92,14 +93,14 @@ process PLINK_VCF_CONVERSION {
 }
 
 process GEMMA_KINSHIP {
-    tag "${phenotype_name}"
+    tag "${phenotype_name}_${way}"
     label 'process_medium'
-    publishDir "${params.output_prefix}/${params.analysis_type}/tmp/${phenotype_name}", 
+    publishDir "${params.output_prefix}/${way}/tmp/${phenotype_name}", 
                mode: 'copy', 
                pattern: "*.cXX.txt"
     
     input:
-    tuple val(phenotype_name), path(bed), path(bim), path(fam), path(phenotype)
+    tuple val(phenotype_name), path(bed), path(bim), path(fam), path(phenotype), val(way)
     
     output:
     tuple val(phenotype_name), 
@@ -107,7 +108,8 @@ process GEMMA_KINSHIP {
           path(bim), 
           path(fam),
           path("kinship.cXX.txt"),
-          path(phenotype), emit: kinship
+          path(phenotype),
+          val(way), emit: kinship
     
     script:
     """
@@ -123,14 +125,14 @@ process GEMMA_KINSHIP {
 }
 
 process GEMMA_LMM_ASSOCIATION {
-    tag "${phenotype_name}"
+    tag "${phenotype_name}_${way}"
     label 'process_medium'
-    publishDir "${params.output_prefix}/${params.analysis_type}/results/${phenotype_name}", 
+    publishDir "${params.output_prefix}/${way}/results/${phenotype_name}", 
                mode: 'copy', 
                pattern: "*.assoc.txt"
     
     input:
-    tuple val(phenotype_name), path(bed), path(bim), path(fam), path(kinship), path(phenotype)
+    tuple val(phenotype_name), path(bed), path(bim), path(fam), path(kinship), path(phenotype), val(way)
     
     output:
     tuple val(phenotype_name), 
@@ -138,7 +140,8 @@ process GEMMA_LMM_ASSOCIATION {
           path(bim), 
           path(fam),
           path("gemma_lmm.assoc.txt"),
-          path(phenotype), emit: association
+          path(phenotype),
+          val(way), emit: association
     
     script:
     """
@@ -154,20 +157,21 @@ process GEMMA_LMM_ASSOCIATION {
 }
 
 process PLINK_CLUMPING {
-    tag "${phenotype_name}"
+    tag "${phenotype_name}_${way}"
     label 'process_low'
-    publishDir "${params.output_prefix}/${params.analysis_type}/lead_markers", 
+    publishDir "${params.output_prefix}/${way}/lead_markers", 
                mode: 'copy', 
                pattern: "*.clumped"
     
     input:
-    tuple val(phenotype_name), path(bed), path(bim), path(fam), path(assoc), path(phenotype)
+    tuple val(phenotype_name), path(bed), path(bim), path(fam), path(assoc), path(phenotype), val(way)
     
     output:
-    tuple val(phenotype_name), path("${phenotype_name}.clumped"), emit: clumped
+    tuple val(phenotype_name), path("${phenotype_name}.clumped"), val(way), emit: clumped
     
     script:
     """
+    set +e  # Disable exit on error for clumping
     ${params.plink} \\
         --bfile ${phenotype_name} \\
         --clump ${assoc} \\
@@ -179,22 +183,28 @@ process PLINK_CLUMPING {
         --allow-extra-chr \\
         --out ${phenotype_name} \\
         --clump-snp-field rs \\
-        --clump-field p_wald || touch ${phenotype_name}.clumped
+        --clump-field p_wald
+    
+    # If clumping failed or produced no output, create empty clumped file
+    if [ ! -f ${phenotype_name}.clumped ]; then
+        touch ${phenotype_name}.clumped
+    fi
+    set -e  # Re-enable exit on error
     """
 }
 
 process GCTA_HERITABILITY {
-    tag "${phenotype_name}"
+    tag "${phenotype_name}_${way}"
     label 'process_high'
-    publishDir "${params.output_prefix}/${params.analysis_type}/results/${phenotype_name}", 
+    publishDir "${params.output_prefix}/${way}/results/${phenotype_name}", 
                mode: 'copy', 
                pattern: "*.hsq"
     
     input:
-    tuple val(phenotype_name), path(bed), path(bim), path(fam), path(assoc), path(phenotype)
+    tuple val(phenotype_name), path(bed), path(bim), path(fam), path(assoc), path(phenotype), val(way)
     
     output:
-    tuple val(phenotype_name), path("${phenotype_name}.hsq"), emit: heritability
+    tuple val(phenotype_name), path("${phenotype_name}.hsq"), val(way), emit: heritability
     
     script:
     """
@@ -228,8 +238,25 @@ workflow GWAS_ANALYSIS_SPLIT {
     gwas_input  // tuple(vcf, phenotype, population_list)
     
     main:
+    // Extract "way" from VCF filename (e.g., "SNP_split", "SNP_INDEL_split", etc.)
+    // VCF naming: SNP.split.xxx.vcf, SNP_INDEL.split.xxx.vcf, SNP_INDEL_SV.split.xxx.vcf
+    gwas_with_way = gwas_input.map { vcf, pheno, list ->
+        def vcf_name = vcf.name
+        def way = ""
+        if (vcf_name.startsWith("SNP_INDEL_SV.split.")) {
+            way = "SNP_INDEL_SV_split"
+        } else if (vcf_name.startsWith("SNP_INDEL.split.")) {
+            way = "SNP_INDEL_split"
+        } else if (vcf_name.startsWith("SNP.split.")) {
+            way = "SNP_split"
+        } else {
+            way = "unknown_split"
+        }
+        tuple(vcf, pheno, list, way)
+    }
+    
     // Preprocess phenotype files
-    preprocessed = PREPROCESS_PHENOTYPE_SPLIT(gwas_input)
+    preprocessed = PREPROCESS_PHENOTYPE_SPLIT(gwas_with_way)
     
     // Convert VCF to PLINK binary format
     plink_files = PLINK_VCF_CONVERSION(preprocessed)
@@ -257,8 +284,25 @@ workflow GWAS_ANALYSIS_UNSPLIT {
     gwas_input  // tuple(vcf, phenotype, population_list)
     
     main:
+    // Extract "way" from VCF filename (e.g., "SNP_unsplit", "SNP_INDEL_unsplit", etc.)
+    // VCF naming: SNP.unsplit.xxx.vcf, SNP_INDEL.unsplit.xxx.vcf, SNP_INDEL_SV.unsplit.xxx.vcf
+    gwas_with_way = gwas_input.map { vcf, pheno, list ->
+        def vcf_name = vcf.name
+        def way = ""
+        if (vcf_name.startsWith("SNP_INDEL_SV.unsplit.")) {
+            way = "SNP_INDEL_SV_unsplit"
+        } else if (vcf_name.startsWith("SNP_INDEL.unsplit.")) {
+            way = "SNP_INDEL_unsplit"
+        } else if (vcf_name.startsWith("SNP.unsplit.")) {
+            way = "SNP_unsplit"
+        } else {
+            way = "unknown_unsplit"
+        }
+        tuple(vcf, pheno, list, way)
+    }
+    
     // Preprocess phenotype files
-    preprocessed = PREPROCESS_PHENOTYPE_UNSPLIT(gwas_input)
+    preprocessed = PREPROCESS_PHENOTYPE_UNSPLIT(gwas_with_way)
     
     // Convert VCF to PLINK binary format
     plink_files = PLINK_VCF_CONVERSION(preprocessed)
