@@ -142,20 +142,20 @@ workflow {
 ========================================================================================
 */
 
-workflow.onComplete {
-    log.info """\
-        ========================================
-        Pipeline completed!
-        Status    : ${workflow.success ? 'SUCCESS' : 'FAILED'}
-        Duration  : ${workflow.duration}
+// workflow.onComplete {
+//     log.info """\
+//         ========================================
+//         Pipeline completed!
+//         Status    : ${workflow.success ? 'SUCCESS' : 'FAILED'}
+//         Duration  : ${workflow.duration}
         
-        Results:
-          SPLIT   : ${params.output_prefix}/${analysis_type_name}_split/
-          UNSPLIT : ${params.output_prefix}/${analysis_type_name}_unsplit/
-        ========================================
-        """
-        .stripIndent()
-}
+//         Results:
+//           SPLIT   : ${params.output_prefix}/${analysis_type_name}_split/
+//           UNSPLIT : ${params.output_prefix}/${analysis_type_name}_unsplit/
+//         ========================================
+//         """
+//         .stripIndent()
+// }
 
 workflow.onError {
     log.error "Pipeline execution stopped with error: ${workflow.errorMessage}"
