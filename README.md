@@ -4,7 +4,7 @@ A comprehensive Nextflow pipeline for genome-wide association studies (GWAS) of 
 
 ## Features
 
-- ✅Automatic processing of both SPLIT and UNSPLIT variant analyses
+-  Automatic processing of both SPLIT and UNSPLIT variant analyses
 -  Parallel VCF preprocessing (SNP, INDEL, SV)
 -  Automated GWAS with GEMMA (kinship-corrected LMM)
 -  Lead marker identification with PLINK clumping
