@@ -36,7 +36,7 @@ sv_vcf: "raw_vcf_dir/698rice.pangenie.multi.impute.vcf"
 ##############################################################################
 
 # Maximum number of parallel GWAS jobs
-max_parallel_gwas: 24
+max_parallel_gwas: 48
 
 # Minor allele frequency threshold
 maf_threshold: 0.01
@@ -82,6 +82,11 @@ clump_kb: 1000
 # bgzip executable path
 # bgzip: "/path/to/bgzip"
 
+# LDAK executable path
+ldak: "ldak"
+
+# LDAK thread count
+ldak_threads: 48
 ##############################################################################
 # COMPUTATIONAL RESOURCES
 ##############################################################################
@@ -90,7 +95,7 @@ clump_kb: 1000
 plink_memory: 10000
 
 # GCTA thread count
-gcta_threads: 10
+gcta_threads: 24
 
 # bcftools thread count
 bcftools_threads: 20

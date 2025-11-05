@@ -23,7 +23,7 @@ data['ID'] = data['ID'].astype(str)
 # 按样本顺序重新排序
 ordered_data = data.set_index('ID').reindex(sample_order).reset_index()
 
-# 写出文件，缺失值替换为 -9，浮点数保留 2 位，确保 -9 是整数
+# 写出文件，缺失值替换为 NA，浮点数保留 2 位
 with open(args.output_file, 'w') as f:
     # 写入表头
     f.write('\t'.join(ordered_data.columns) + '\n')
@@ -34,12 +34,12 @@ with open(args.output_file, 'w') as f:
         for col, val in row.items():
             if col == 'ID':
                 line_values.append(str(val))
-            elif pd.isna(val):
-                line_values.append('-9')  # 缺失值：整数 -9
-            elif isinstance(val, int) or val == -9:
+            elif pd.isna(val) or val == -9:
+                line_values.append('NA')  # 缺失值或-9：NA
+            elif isinstance(val, int):
                 line_values.append(str(int(val)))  # 保持整数
             else:
                 line_values.append(f"{val:.2f}")  # 浮点数保留两位小数
         f.write('\t'.join(line_values) + '\n')
 
-print(f"✅ 数据已排序并保存为 '{args.output_file}'，缺失值为 -9，浮点保留两位小数")
+print(f"✅ 数据已排序并保存为 '{args.output_file}'，缺失值和-9值替换为 NA，浮点保留两位小数")

@@ -46,6 +46,77 @@ process EXTRACT_HERITABILITY {
     """
 }
 
+process EXTRACT_LDAK_HERITABILITY {
+    tag "ldak_heritability_${way}"
+    label 'process_single'
+    publishDir "${params.heritability_dir}", 
+               mode: 'copy'
+    
+    input:
+    tuple val(way), path(reml_files)
+    val output_prefix
+    
+    output:
+    path "${output_prefix}.${way}.ldak.tsv", emit: ldak_heritability_summary
+    
+    script:
+    """
+    # Create output file with header
+    echo -e "Phenotype\\tHeritability\\tSE\\tP_value" > ${output_prefix}.${way}.ldak.tsv
+    
+    # Extract heritability from each .reml file
+    # reml_files contains all reml files for this way (grouped by groupTuple)
+    for file in ${reml_files}; do
+        if [ -f "\${file}" ]; then
+            # Get phenotype name (remove .reml extension and any LDAK suffix)
+            phenotype=\$(basename "\${file}" .reml | sed 's/_LDAK-Thin\$//')
+            
+            # Extract Her_K1 value from line 19, column 2 (heritability)
+            # Extract SE from line 19, column 3 (standard error)
+            # Extract LRT_P from line 17, column 2 (p-value)
+            if [ \$(wc -l < "\${file}") -ge 19 ]; then
+                heritability=\$(sed -n '19p' "\${file}" | awk '{print \$2}')
+                se=\$(sed -n '19p' "\${file}" | awk '{print \$3}')
+                p_value=\$(sed -n '17p' "\${file}" | awk '{print \$2}')
+                
+                if [ ! -z "\${heritability}" ] && [ "\${heritability}" != "NA" ]; then
+                    echo -e "\${phenotype}\\t\${heritability}\\t\${se}\\t\${p_value}" >> ${output_prefix}.${way}.ldak.tsv
+                fi
+            fi
+        fi
+    done
+    
+    echo "LDAK heritability extraction for ${way} complete."
+    """
+}
+
+process GENERATE_HERITABILITY_TABLE {
+    tag "heritability_table"
+    label 'process_single'
+    publishDir "${params.heritability_dir}", 
+               mode: 'copy'
+    
+    input:
+    path ldak_tsv_files  // Multiple TSV files from EXTRACT_LDAK_HERITABILITY
+    val output_prefix
+    val heritability_dir
+    
+    output:
+    path "${output_prefix}.heritability_summary.xlsx", emit: heritability_table
+    
+    script:
+    """
+    # The files are already in the working directory or will be symlinked
+    # Python script will find them using glob pattern
+    ${params.python3} ${projectDir}/scripts/combine_heritability_table.py \\
+        . \\
+        ${output_prefix} \\
+        ${output_prefix}.heritability_summary.xlsx
+    
+    echo "Heritability table generation complete."
+    """
+}
+
 process EXTRACT_LEAD_MARKERS {
     tag "lead_markers_${way}"
     label 'process_single'
@@ -57,7 +128,7 @@ process EXTRACT_LEAD_MARKERS {
     val output_prefix
     
     output:
-    path "${output_prefix}.${way}.ld_marker.tsv", emit: lead_markers_summary
+    tuple val(way), path("${output_prefix}.${way}.ld_marker.tsv"), emit: lead_markers_summary
     
     script:
     """
@@ -80,6 +151,31 @@ process EXTRACT_LEAD_MARKERS {
     mv temp.tsv ${output_prefix}.${way}.ld_marker.tsv
     
     echo "Lead marker extraction for ${way} complete."
+    """
+}
+
+process EXTRACT_LD_MARKER_VCF {
+    tag "ld_vcf_${way}"
+    label 'process_medium'
+    publishDir "${params.output_prefix}/${way}/ld_filtered_vcf", 
+               mode: 'copy'
+    
+    input:
+    tuple val(way), path(ld_marker_tsv), path(vcf), path(population_list)
+    
+    output:
+    tuple val(way), path("${vcf.baseName}.ld.reheader.vcf.gz"), emit: ld_filtered_vcf
+    
+    script:
+    """
+    # Extract VCF variants matching LD marker IDs (uncompressed for reheader)
+    ${params.bcftools} view -i 'ID=@${ld_marker_tsv}' ${vcf} > ${vcf.baseName}.ld.vcf
+
+    # Reheader with population list and compress
+    ${params.bcftools} reheader -s ${population_list} -o ${vcf.baseName}.ld.reheader.vcf ${vcf.baseName}.ld.vcf
+    ${params.bgzip} -f ${vcf.baseName}.ld.reheader.vcf
+
+    echo "LD marker VCF extraction and reheader for ${way} complete."
     """
 }
 

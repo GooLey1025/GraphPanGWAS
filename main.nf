@@ -31,12 +31,17 @@ log.info """\
 
 // Import modules
 include { VCF_PREPROCESSING } from './modules/vcf_preprocessing'
+include { WHOLE_GENOME_MARKERS } from './modules/wholegenome_markers'
 include { GWAS_ANALYSIS_SPLIT } from './modules/gwas'
 include { GWAS_ANALYSIS_UNSPLIT } from './modules/gwas'
-include { EXTRACT_HERITABILITY as EXTRACT_HERITABILITY_SPLIT } from './modules/postprocessing'
-include { EXTRACT_HERITABILITY as EXTRACT_HERITABILITY_UNSPLIT } from './modules/postprocessing'
+// ===== GCTA HERITABILITY EXTRACTION MODULES - COMMENTED OUT =====
+// include { EXTRACT_HERITABILITY as EXTRACT_HERITABILITY_SPLIT } from './modules/postprocessing'
+// include { EXTRACT_HERITABILITY as EXTRACT_HERITABILITY_UNSPLIT } from './modules/postprocessing'
+include { EXTRACT_LDAK_HERITABILITY as EXTRACT_LDAK_HERITABILITY_SPLIT } from './modules/postprocessing'
+include { GENERATE_HERITABILITY_TABLE } from './modules/postprocessing'
 include { EXTRACT_LEAD_MARKERS as EXTRACT_LEAD_MARKERS_SPLIT } from './modules/postprocessing'
 include { EXTRACT_LEAD_MARKERS as EXTRACT_LEAD_MARKERS_UNSPLIT } from './modules/postprocessing'
+include { EXTRACT_LD_MARKER_VCF } from './modules/postprocessing'
 
 /*
 ========================================================================================
@@ -60,6 +65,14 @@ workflow {
         ref_fa_ch
     )
     
+    // Generate whole genome LD-pruned markers for SNP split VCF only
+    // Use the SNP split VCF from VCF preprocessing output
+    snp_split_vcf = VCF_PREPROCESSING.out.split_vcf
+        .filter { vcf -> vcf.name.startsWith("SNP.split.") }
+    
+    // Run whole genome marker generation
+    whole_genome_markers = WHOLE_GENOME_MARKERS(snp_split_vcf, population_list_ch)
+    
     // Validate and collect phenotype files
     phenotype_files = Channel
         .fromPath("${params.phenotypes_dir}/*.tsv", checkIfExists: true)
@@ -78,7 +91,8 @@ workflow {
             }
             return file
         }
-    
+
+
     // ===== Run GWAS on SPLIT version =====
     gwas_input_split = VCF_PREPROCESSING.out.split_vcf
         .combine(phenotype_files)
@@ -89,23 +103,45 @@ workflow {
     )
     
     // Post-processing for SPLIT - group by way
-    hsq_by_way_split = gwas_results_split.hsq_files
-        .map { pheno_name, hsq, way -> tuple(way, hsq) }
-        .groupTuple()
+    // hsq_by_way_split = gwas_results_split.hsq_files
+    //     .map { pheno_name, hsq, way -> tuple(way, hsq) }
+    //     .groupTuple()
     
     clumped_by_way_split = gwas_results_split.clumped_files
         .map { pheno_name, clumped, way -> tuple(way, clumped) }
         .groupTuple()
     
-    EXTRACT_HERITABILITY_SPLIT(
-        hsq_by_way_split,
-        params.output_prefix
-    )
-    
     EXTRACT_LEAD_MARKERS_SPLIT(
         clumped_by_way_split,
         params.output_prefix
     )
+    
+    // ===== Extract LD marker-filtered VCFs for split version =====
+    // Only for SNP_split, SNP_INDEL_split, and SNP_INDEL_SV_split
+    ld_marker_files = EXTRACT_LEAD_MARKERS_SPLIT.out.lead_markers_summary
+    
+    // Get the original split VCFs for the three ways
+    split_vcfs_for_ld = VCF_PREPROCESSING.out.split_vcf
+        .map { vcf ->
+            def vcf_name = vcf.name
+            def way = ""
+            if (vcf_name.startsWith("SNP_INDEL_SV.split.")) {
+                way = "SNP_INDEL_SV_split"
+            } else if (vcf_name.startsWith("SNP_INDEL.split.")) {
+                way = "SNP_INDEL_split"
+            } else if (vcf_name.startsWith("SNP.split.")) {
+                way = "SNP_split"
+            }
+            if (way != "") {
+                tuple(way, vcf)
+            }
+        }
+        .filter { it != null }
+    
+    // Combine LD marker files with their corresponding VCFs and population list
+    ld_extraction_input = ld_marker_files.combine(split_vcfs_for_ld, by: 0).combine(population_list_ch)
+    
+    EXTRACT_LD_MARKER_VCF(ld_extraction_input)
     
     // ===== Run GWAS on UNSPLIT version =====
     gwas_input_unsplit = VCF_PREPROCESSING.out.unsplit_vcf
@@ -117,22 +153,40 @@ workflow {
     )
     
     // Post-processing for UNSPLIT - group by way
-    hsq_by_way_unsplit = gwas_results_unsplit.hsq_files
-        .map { pheno_name, hsq, way -> tuple(way, hsq) }
-        .groupTuple()
+    // hsq_by_way_unsplit = gwas_results_unsplit.hsq_files
+    //     .map { pheno_name, hsq, way -> tuple(way, hsq) }
+    //     .groupTuple()
     
     clumped_by_way_unsplit = gwas_results_unsplit.clumped_files
         .map { pheno_name, clumped, way -> tuple(way, clumped) }
         .groupTuple()
     
-    EXTRACT_HERITABILITY_UNSPLIT(
-        hsq_by_way_unsplit,
-        params.output_prefix
-    )
-    
     EXTRACT_LEAD_MARKERS_UNSPLIT(
         clumped_by_way_unsplit,
         params.output_prefix
+    )
+    
+    // ===== Combine all LDAK heritability results (all 5 types: SNP, INDEL, SV, SNP_INDEL, SNP_INDEL_SV) =====
+    // Merge split and unsplit LDAK results together
+    all_ldak_reml = gwas_results_split.ldak_reml_files
+        .concat(gwas_results_unsplit.ldak_reml_files)
+        .map { pheno_name, reml, way -> tuple(way, reml) }
+        .groupTuple()
+    
+    // Extract LDAK heritability for all types together (both split and unsplit)
+    EXTRACT_LDAK_HERITABILITY_SPLIT(
+        all_ldak_reml,
+        params.output_prefix
+    )
+    
+    // Collect all LDAK TSV files and generate Excel summary table
+    all_ldak_tsv_files = EXTRACT_LDAK_HERITABILITY_SPLIT.out.ldak_heritability_summary
+        .collect()
+    
+    GENERATE_HERITABILITY_TABLE(
+        all_ldak_tsv_files,
+        params.output_prefix,
+        params.heritability_dir
     )
 }
 

@@ -51,34 +51,26 @@ EOF
     ${params.awk} 'BEGIN{OFS="\\t"} 
     /^#/ {print; next} 
     {
-        if (NF > 1) {
-            key = "SNP-"\$1"-"\$2
-            count[key]++
-            \$3 = key"-"count[key]
-            print
-        }
-    }
-    END {
-        if (NR > 0 && NF > 0) {
-            printf ""
-        }
+        key = "SNP-"\$1"-"\$2
+        count[key]++
+        \$3 = key"-"count[key]
+        print
     }' norm_renamed_${snp_vcf} > SNP.split.${snp_vcf}
-    
-    # Assign IDs for UNSPLIT version (no normalization)
-    ${params.awk} 'BEGIN{OFS="\\t"} 
-    /^#/ {print; next} 
-    {
-        if (NF > 1) {
-            key = "SNP-"\$1"-"\$2
-            count[key]++
-            \$3 = key"-"count[key]
-            printf "%s", \$0
-            printf "\\n"
-        }
-    }' renamed_${snp_vcf} > SNP.unsplit.${snp_vcf}
     
     # Remove trailing blank lines
     ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' SNP.split.${snp_vcf}
+    
+    # Assign IDs for UNSPLIT version
+    ${params.awk} 'BEGIN{OFS="\\t"} 
+    /^#/ {print; next} 
+    {
+        key = "SNP-"\$1"-"\$2
+        count[key]++
+        \$3 = key"-"count[key]
+        print
+    }' renamed_${snp_vcf} > SNP.unsplit.${snp_vcf}
+    
+    # Remove trailing blank lines
     ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' SNP.unsplit.${snp_vcf}
     """
 }
@@ -124,34 +116,26 @@ EOF
     ${params.awk} 'BEGIN{OFS="\\t"} 
     /^#/ {print; next} 
     {
-        if (NF > 1) {
-            key = "INDEL-"\$1"-"\$2
-            count[key]++
-            \$3 = key"-"count[key]
-            print
-        }
-    }
-    END {
-        if (NR > 0 && NF > 0) {
-            printf ""
-        }
+        key = "INDEL-"\$1"-"\$2
+        count[key]++
+        \$3 = key"-"count[key]
+        print
     }' norm_renamed_${indel_vcf} > INDEL.split.${indel_vcf}
-    
-    # Assign IDs for UNSPLIT version (no normalization)
-    ${params.awk} 'BEGIN{OFS="\\t"} 
-    /^#/ {print; next} 
-    {
-        if (NF > 1) {
-            key = "INDEL-"\$1"-"\$2
-            count[key]++
-            \$3 = key"-"count[key]
-            printf "%s", \$0
-            printf "\\n"
-        }
-    }' renamed_${indel_vcf} > INDEL.unsplit.${indel_vcf}
     
     # Remove trailing blank lines
     ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' INDEL.split.${indel_vcf}
+    
+    # Assign IDs for UNSPLIT version
+    ${params.awk} 'BEGIN{OFS="\\t"} 
+    /^#/ {print; next} 
+    {
+        key = "INDEL-"\$1"-"\$2
+        count[key]++
+        \$3 = key"-"count[key]
+        print
+    }' renamed_${indel_vcf} > INDEL.unsplit.${indel_vcf}
+    
+    # Remove trailing blank lines
     ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' INDEL.unsplit.${indel_vcf}
     """
 }
@@ -204,18 +188,14 @@ EOF
     ${params.awk} 'BEGIN{OFS="\\t"} 
     /^#/ {print; next} 
     {
-        if (NF > 1) {
-            key = "SV-"\$1"-"\$2
-            count[key]++
-            \$3 = key"-"count[key]
-            print
-        }
-    }
-    END {
-        if (NR > 0 && NF > 0) {
-            printf ""
-        }
+        key = "SV-"\$1"-"\$2
+        count[key]++
+        \$3 = key"-"count[key]
+        print
     }' sv.split.temp.${sv_vcf} > SV.split.${sv_vcf}
+    
+    # Remove trailing blank lines
+    ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' SV.split.${sv_vcf}
     
     # UNSPLIT version: extract from gzipped renamed file
     ${params.bcftools} view LeftAligned_renamed_${sv_vcf}.gz > LeftAligned_renamed_${sv_vcf}
@@ -223,22 +203,17 @@ EOF
     # Filter SV for UNSPLIT version 
     bash ${projectDir}/scripts/sv_filter.sh LeftAligned_renamed_${sv_vcf} sv.unsplit.temp.${sv_vcf}
 
-    
-    # Assign IDs for UNSPLIT version (no normalization)
+    # Assign IDs for UNSPLIT version
     ${params.awk} 'BEGIN{OFS="\\t"} 
     /^#/ {print; next} 
     {
-        if (NF > 1) {
-            key = "SV-"\$1"-"\$2
-            count[key]++
-            \$3 = key"-"count[key]
-            printf "%s", \$0
-            printf "\\n"
-        }
+        key = "SV-"\$1"-"\$2
+        count[key]++
+        \$3 = key"-"count[key]
+        print
     }' sv.unsplit.temp.${sv_vcf} > SV.unsplit.${sv_vcf}
     
     # Remove trailing blank lines
-    ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' SV.split.${sv_vcf}
     ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' SV.unsplit.${sv_vcf}
     """
 }
@@ -250,8 +225,7 @@ process MERGE_SNP_INDEL_SPLIT {
     publishDir "${params.vcf_dir}", mode: 'copy'
     
     input:
-    path snp_vcf
-    path indel_vcf
+    tuple path(snp_vcf), path(indel_vcf)
     
     output:
     path "SNP_INDEL.split.*.vcf", emit: merged_vcf
@@ -293,9 +267,7 @@ process MERGE_SNP_INDEL_SV_SPLIT {
     publishDir "${params.vcf_dir}", mode: 'copy'
     
     input:
-    path snp_vcf
-    path indel_vcf
-    path sv_vcf
+    tuple path(snp_vcf), path(indel_vcf), path(sv_vcf)
     
     output:
     path "SNP_INDEL_SV.split.*.vcf", emit: merged_vcf
@@ -346,8 +318,7 @@ process MERGE_SNP_INDEL_UNSPLIT {
     publishDir "${params.vcf_dir}", mode: 'copy'
     
     input:
-    path snp_vcf
-    path indel_vcf
+    tuple path(snp_vcf), path(indel_vcf)
     
     output:
     path "SNP_INDEL.unsplit.*.vcf", emit: merged_vcf
@@ -389,9 +360,7 @@ process MERGE_SNP_INDEL_SV_UNSPLIT {
     publishDir "${params.vcf_dir}", mode: 'copy'
     
     input:
-    path snp_vcf
-    path indel_vcf
-    path sv_vcf
+    tuple path(snp_vcf), path(indel_vcf), path(sv_vcf)
     
     output:
     path "SNP_INDEL_SV.unsplit.*.vcf", emit: merged_vcf
@@ -404,6 +373,11 @@ process MERGE_SNP_INDEL_SV_UNSPLIT {
     def output_name = "SNP_INDEL_SV.unsplit." + output_parts.join('.')
     
     """
+    # Our server have problem with trailing blank lines, so we need to remove them.
+    ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' ${snp_vcf}
+    ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' ${indel_vcf}
+    ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' ${sv_vcf}
+
     # Create tmp directory for intermediate files
     mkdir -p tmp_vcf_dir
     
@@ -425,6 +399,7 @@ process MERGE_SNP_INDEL_SV_UNSPLIT {
     
     # Process SV file
     echo "Processing SV file: ${sv_vcf}"
+    ${params.perl} -i -ne 'print unless eof && /^[\\x00\\s]*\$/' ${sv_vcf} # Remove trailing blank lines
     ${params.bcftools} sort "${sv_vcf}" -o "tmp_vcf_dir/SV.unsplit.pos_sorted.\$(basename ${sv_vcf})"
     ${params.bcftools} query -l "tmp_vcf_dir/SV.unsplit.pos_sorted.\$(basename ${sv_vcf})" | sort > "tmp_vcf_dir/sv_samples.txt"
     ${params.bcftools} view -S "tmp_vcf_dir/sv_samples.txt" "tmp_vcf_dir/SV.unsplit.pos_sorted.\$(basename ${sv_vcf})" -o "tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf})"
@@ -435,6 +410,13 @@ process MERGE_SNP_INDEL_SV_UNSPLIT {
     ${params.bcftools} concat -a tmp_vcf_dir/SNP.unsplit.sorted.\$(basename ${snp_vcf}).gz tmp_vcf_dir/INDEL.unsplit.sorted.\$(basename ${indel_vcf}).gz tmp_vcf_dir/SV.unsplit.sorted.\$(basename ${sv_vcf}).gz -o ${output_name}
     """
 }
+
+/*
+========================================================================================
+    VCF Recode Process for LDAK
+    Recodes multi-character alleles (INDEL, SV) to X/Y for LDAK compatibility
+========================================================================================
+*/
 
 /*
 ========================================================================================
@@ -476,36 +458,72 @@ workflow VCF_PREPROCESSING {
         sv_unsplit_vcf = sv_processed.unsplit_vcf
     }
     
-    // Step 2: MERGE - Generate all 6 types of VCF files for GWAS
+    // Step 2: MERGE - Generate all 5 types of VCF files for GWAS
     // Following the logic in run_pipeline.sh VCF_WAY_PAIRS
     
-    // Create channels for different VCF combinations
-    all_split_vcfs = Channel.empty()
-    all_unsplit_vcfs = Channel.empty()
+    // Collect channels for final output using mix()
+    split_vcf_channels = []
+    unsplit_vcf_channels = []
     
     // Type 1: SNP only (split and unsplit)
     // No merge needed for single SNP file - directly use PREPARE_SNP output
     if (params.snp_vcf) {
-        all_split_vcfs = all_split_vcfs.concat(snp_split_vcf)
-        all_unsplit_vcfs = all_unsplit_vcfs.concat(snp_unsplit_vcf)
+        split_vcf_channels.add(snp_split_vcf)
+        unsplit_vcf_channels.add(snp_unsplit_vcf)
     }
     
-    // Type 2: SNP_INDEL (merge SNP + INDEL, split and unsplit)
+    // Type 2: INDEL only (split and unsplit)
+    // No merge needed for single INDEL file - directly use PREPARE_INDEL output
+    if (params.indel_vcf) {
+        split_vcf_channels.add(indel_split_vcf)
+        unsplit_vcf_channels.add(indel_unsplit_vcf)
+    }
+    
+    // Type 3: SV only (split and unsplit)
+    // No merge needed for single SV file - directly use PREPARE_SV output
+    if (params.sv_vcf) {
+        split_vcf_channels.add(sv_split_vcf)
+        unsplit_vcf_channels.add(sv_unsplit_vcf)
+    }
+    
+    // Type 4: SNP_INDEL (merge SNP + INDEL, split and unsplit)
     if (params.snp_vcf && params.indel_vcf) {
-        snp_indel_split_merged = MERGE_SNP_INDEL_SPLIT(snp_split_vcf, indel_split_vcf)
-        snp_indel_unsplit_merged = MERGE_SNP_INDEL_UNSPLIT(snp_unsplit_vcf, indel_unsplit_vcf)
+        // Combine channels for merge processes
+        snp_indel_split_combined = snp_split_vcf.combine(indel_split_vcf)
+        snp_indel_unsplit_combined = snp_unsplit_vcf.combine(indel_unsplit_vcf)
         
-        all_split_vcfs = all_split_vcfs.concat(snp_indel_split_merged.merged_vcf)
-        all_unsplit_vcfs = all_unsplit_vcfs.concat(snp_indel_unsplit_merged.merged_vcf)
+        snp_indel_split_merged = MERGE_SNP_INDEL_SPLIT(snp_indel_split_combined)
+        snp_indel_unsplit_merged = MERGE_SNP_INDEL_UNSPLIT(snp_indel_unsplit_combined)
+        
+        split_vcf_channels.add(snp_indel_split_merged.merged_vcf)
+        unsplit_vcf_channels.add(snp_indel_unsplit_merged.merged_vcf)
     }
     
-    // Type 3: SNP_INDEL_SV (merge SNP + INDEL + SV, split and unsplit)
+    // Type 5: SNP_INDEL_SV (merge SNP + INDEL + SV, split and unsplit)
     if (params.snp_vcf && params.indel_vcf && params.sv_vcf) {
-        snp_indel_sv_split_merged = MERGE_SNP_INDEL_SV_SPLIT(snp_split_vcf, indel_split_vcf, sv_split_vcf)
-        snp_indel_sv_unsplit_merged = MERGE_SNP_INDEL_SV_UNSPLIT(snp_unsplit_vcf, indel_unsplit_vcf, sv_unsplit_vcf)
+        // Combine channels for merge processes
+        snp_indel_sv_split_combined = snp_split_vcf.combine(indel_split_vcf).combine(sv_split_vcf)
+        snp_indel_sv_unsplit_combined = snp_unsplit_vcf.combine(indel_unsplit_vcf).combine(sv_unsplit_vcf)
         
-        all_split_vcfs = all_split_vcfs.concat(snp_indel_sv_split_merged.merged_vcf)
-        all_unsplit_vcfs = all_unsplit_vcfs.concat(snp_indel_sv_unsplit_merged.merged_vcf)
+        snp_indel_sv_split_merged = MERGE_SNP_INDEL_SV_SPLIT(snp_indel_sv_split_combined)
+        snp_indel_sv_unsplit_merged = MERGE_SNP_INDEL_SV_UNSPLIT(snp_indel_sv_unsplit_combined)
+        
+        split_vcf_channels.add(snp_indel_sv_split_merged.merged_vcf)
+        unsplit_vcf_channels.add(snp_indel_sv_unsplit_merged.merged_vcf)
+    }
+    
+    // Mix all channels together
+    // Handle empty list case - if no channels were added, return empty channel
+    if (split_vcf_channels.size() > 0) {
+        all_split_vcfs = Channel.empty().mix(*split_vcf_channels)
+    } else {
+        all_split_vcfs = Channel.empty()
+    }
+    
+    if (unsplit_vcf_channels.size() > 0) {
+        all_unsplit_vcfs = Channel.empty().mix(*unsplit_vcf_channels)
+    } else {
+        all_unsplit_vcfs = Channel.empty()
     }
     
     emit:
