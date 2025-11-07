@@ -39,7 +39,7 @@ sv_vcf: "raw_vcf_dir/698rice.pangenie.multi.impute.vcf"
 max_parallel_gwas: 48
 
 # Minor allele frequency threshold
-maf_threshold: 0.01
+maf_threshold: 0.05
 
 # Missing rate threshold
 miss_threshold: 0.2
