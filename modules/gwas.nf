@@ -327,20 +327,48 @@ process LDAK_CALCULATE_HERITABILITY_MGRM {
                pattern: "*.reml"
     
     input:
-    tuple path(phenotype), path(population_list), val(way), path(grm_bins), path(grm_ids), path(grm_details), path(grm_adjusts)
+    tuple path(phenotype), 
+          path(population_list), 
+          val(way), 
+          val(grm_bins), 
+          val(grm_ids), 
+          val(grm_details), 
+          val(grm_adjusts)
     
     output:
     tuple val("${phenotype.baseName}"), path("*.reml"), val(way), emit: heritability
     
     script:
+    def bins_list = grm_bins instanceof List ? grm_bins : [grm_bins]
+    def ids_list = grm_ids instanceof List ? grm_ids : [grm_ids]
+    def details_list = grm_details instanceof List ? grm_details : [grm_details]
+    def adjusts_list = grm_adjusts instanceof List ? grm_adjusts : [grm_adjusts]
+    
     """
     # Extract phenotype name from filename
     phenotype_name=\$(basename ${phenotype} | sed 's/processed_//')
     
-    # Create GRM list file for multi-GRM analysis
-    # Extract GRM prefixes (remove .grm.bin extension) from all GRM binary files
-    for grm_file in ${grm_bins}; do
-        basename \${grm_file} .grm.bin >> \${phenotype_name}.grm.list
+    # Reorganize GRM files to have consistent prefixes for LDAK
+    # LDAK expects all files (.grm.bin, .grm.id, .grm.details, .grm.adjust) to share the same prefix
+    
+    # Create arrays from the file paths
+    bins=(${bins_list.collect { "\"$it\"" }.join(' ')})
+    ids=(${ids_list.collect { "\"$it\"" }.join(' ')})
+    details=(${details_list.collect { "\"$it\"" }.join(' ')})
+    adjusts=(${adjusts_list.collect { "\"$it\"" }.join(' ')})
+    
+    # Process each GRM set
+    for i in "\${!bins[@]}"; do
+        grm_num=\$((i + 1))
+        
+        # Create symlinks with numbered prefixes using absolute paths
+        ln -sf "\${bins[\$i]}" "\${grm_num}.grm.bin"
+        ln -sf "\${ids[\$i]}" "\${grm_num}.grm.id"
+        ln -sf "\${details[\$i]}" "\${grm_num}.grm.details"
+        ln -sf "\${adjusts[\$i]}" "\${grm_num}.grm.adjust"
+        
+        # Add to GRM list
+        echo "\${grm_num}" >> "\${phenotype_name}.grm.list"
     done
     
     # Calculate heritability using multiple GRMs
@@ -443,44 +471,50 @@ workflow GWAS_ANALYSIS_SPLIT {
         .unique()
     
     // Prepare multi-GRM input for SNP_INDEL (needs SNP + INDEL GRMs)
+    snp_indel_grms = ldak_grm.grm_files
+        .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+            way in ["SNP_split", "INDEL_split"]
+        }
+        .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+            tuple(grm_bin, grm_id, grm_details, grm_adjust)
+        }
+        .collect()
+        .map { grm_list ->
+            def grm_bins = grm_list.collect { it[0] }
+            def grm_ids = grm_list.collect { it[1] }
+            def grm_details = grm_list.collect { it[2] }
+            def grm_adjusts = grm_list.collect { it[3] }
+            tuple(grm_bins, grm_ids, grm_details, grm_adjusts)
+        }
+    
     snp_indel_input = merged_type_pheno
         .filter { way, pheno, list -> way == "SNP_INDEL_split" }
-        .combine(
-            ldak_grm.grm_files
-                .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
-                    way in ["SNP_split", "INDEL_split"]
-                }
-                .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
-                    tuple(grm_bin, grm_id, grm_details, grm_adjust)
-                }
-                .collect()
-        )
-        .map { way, pheno, list, grm_files ->
-            def grm_bins = grm_files.collect { it[0] }
-            def grm_ids = grm_files.collect { it[1] }
-            def grm_details = grm_files.collect { it[2] }
-            def grm_adjusts = grm_files.collect { it[3] }
+        .combine(snp_indel_grms)
+        .map { way, pheno, list, grm_bins, grm_ids, grm_details, grm_adjusts ->
             tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
         }
     
     // Prepare multi-GRM input for SNP_INDEL_SV (needs SNP + INDEL + SV GRMs)
+    snp_indel_sv_grms = ldak_grm.grm_files
+        .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+            way in ["SNP_split", "INDEL_split", "SV_split"]
+        }
+        .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+            tuple(grm_bin, grm_id, grm_details, grm_adjust)
+        }
+        .collect()
+        .map { grm_list ->
+            def grm_bins = grm_list.collect { it[0] }
+            def grm_ids = grm_list.collect { it[1] }
+            def grm_details = grm_list.collect { it[2] }
+            def grm_adjusts = grm_list.collect { it[3] }
+            tuple(grm_bins, grm_ids, grm_details, grm_adjusts)
+        }
+    
     snp_indel_sv_input = merged_type_pheno
         .filter { way, pheno, list -> way == "SNP_INDEL_SV_split" }
-        .combine(
-            ldak_grm.grm_files
-                .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
-                    way in ["SNP_split", "INDEL_split", "SV_split"]
-                }
-                .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
-                    tuple(grm_bin, grm_id, grm_details, grm_adjust)
-                }
-                .collect()
-        )
-        .map { way, pheno, list, grm_files ->
-            def grm_bins = grm_files.collect { it[0] }
-            def grm_ids = grm_files.collect { it[1] }
-            def grm_details = grm_files.collect { it[2] }
-            def grm_adjusts = grm_files.collect { it[3] }
+        .combine(snp_indel_sv_grms)
+        .map { way, pheno, list, grm_bins, grm_ids, grm_details, grm_adjusts ->
             tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
         }
     
@@ -587,44 +621,50 @@ workflow GWAS_ANALYSIS_UNSPLIT {
         .unique()
     
     // Prepare multi-GRM input for SNP_INDEL (needs SNP + INDEL GRMs)
+    snp_indel_grms = ldak_grm.grm_files
+        .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+            way in ["SNP_unsplit", "INDEL_unsplit"]
+        }
+        .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+            tuple(grm_bin, grm_id, grm_details, grm_adjust)
+        }
+        .collect()
+        .map { grm_list ->
+            def grm_bins = grm_list.collect { it[0] }
+            def grm_ids = grm_list.collect { it[1] }
+            def grm_details = grm_list.collect { it[2] }
+            def grm_adjusts = grm_list.collect { it[3] }
+            tuple(grm_bins, grm_ids, grm_details, grm_adjusts)
+        }
+    
     snp_indel_input = merged_type_pheno
         .filter { way, pheno, list -> way == "SNP_INDEL_unsplit" }
-        .combine(
-            ldak_grm.grm_files
-                .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
-                    way in ["SNP_unsplit", "INDEL_unsplit"]
-                }
-                .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
-                    tuple(grm_bin, grm_id, grm_details, grm_adjust)
-                }
-                .collect()
-        )
-        .map { way, pheno, list, grm_files ->
-            def grm_bins = grm_files.collect { it[0] }
-            def grm_ids = grm_files.collect { it[1] }
-            def grm_details = grm_files.collect { it[2] }
-            def grm_adjusts = grm_files.collect { it[3] }
+        .combine(snp_indel_grms)
+        .map { way, pheno, list, grm_bins, grm_ids, grm_details, grm_adjusts ->
             tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
         }
     
     // Prepare multi-GRM input for SNP_INDEL_SV (needs SNP + INDEL + SV GRMs)
+    snp_indel_sv_grms = ldak_grm.grm_files
+        .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+            way in ["SNP_unsplit", "INDEL_unsplit", "SV_unsplit"]
+        }
+        .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+            tuple(grm_bin, grm_id, grm_details, grm_adjust)
+        }
+        .collect()
+        .map { grm_list ->
+            def grm_bins = grm_list.collect { it[0] }
+            def grm_ids = grm_list.collect { it[1] }
+            def grm_details = grm_list.collect { it[2] }
+            def grm_adjusts = grm_list.collect { it[3] }
+            tuple(grm_bins, grm_ids, grm_details, grm_adjusts)
+        }
+    
     snp_indel_sv_input = merged_type_pheno
         .filter { way, pheno, list -> way == "SNP_INDEL_SV_unsplit" }
-        .combine(
-            ldak_grm.grm_files
-                .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
-                    way in ["SNP_unsplit", "INDEL_unsplit", "SV_unsplit"]
-                }
-                .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
-                    tuple(grm_bin, grm_id, grm_details, grm_adjust)
-                }
-                .collect()
-        )
-        .map { way, pheno, list, grm_files ->
-            def grm_bins = grm_files.collect { it[0] }
-            def grm_ids = grm_files.collect { it[1] }
-            def grm_details = grm_files.collect { it[2] }
-            def grm_adjusts = grm_files.collect { it[3] }
+        .combine(snp_indel_sv_grms)
+        .map { way, pheno, list, grm_bins, grm_ids, grm_details, grm_adjusts ->
             tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
         }
     

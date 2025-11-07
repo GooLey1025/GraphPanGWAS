@@ -36,10 +36,10 @@ sv_vcf: "raw_vcf_dir/532rice.pangenie.multi.impute.vcf"
 ##############################################################################
 
 # Maximum number of parallel GWAS jobs
-max_parallel_gwas: 24
+max_parallel_gwas: 48
 
 # Minor allele frequency threshold
-maf_threshold: 0.01
+maf_threshold: 0.05
 
 # Missing rate threshold
 miss_threshold: 0.2
@@ -86,10 +86,10 @@ clump_kb: 1000
 ldak: "ldak"
 
 # LDAK thread count
-ldak_threads: 24
+ldak_threads: 48
 
+# LDAK power parameter for kinship calculation (default: -0.5)
 ldak_power: -0.5
-
 ##############################################################################
 # COMPUTATIONAL RESOURCES
 ##############################################################################
