@@ -87,6 +87,9 @@ ldak: "ldak"
 
 # LDAK thread count
 ldak_threads: 48
+
+# LDAK power parameter for kinship calculation (default: -0.5)
+ldak_power: -0.5
 ##############################################################################
 # COMPUTATIONAL RESOURCES
 ##############################################################################

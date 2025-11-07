@@ -4,9 +4,13 @@ Combine multiple LDAK heritability TSV files into a single Excel table.
 
 This script reads all ${output_prefix}.*.ldak.tsv files and combines them into
 a formatted Excel table with hierarchical column headers:
-- Phenotype (first column)
-- Heritability | split | SNP/INDEL/SV/SNP_INDEL/SNP_INDEL_SV
-- Heritability | Unsplit | SNP/INDEL/SV/SNP_INDEL/SNP_INDEL_SV
+- Sheet 1 (Heritability): Summary table with all phenotypes
+  - Phenotype (first column)
+  - Heritability | split | SNP/INDEL/SV/SNP_INDEL/SNP_INDEL_SV
+  - Heritability | Unsplit | SNP/INDEL/SV/SNP_INDEL/SNP_INDEL_SV
+- Additional sheets for merged types (SNP_INDEL and SNP_INDEL_SV):
+  - Detailed REML information including Converged status
+  - Her_K1, Her_K2, Her_K3, Her_Top, Her_All with SE values
 """
 
 import sys
@@ -31,6 +35,141 @@ def read_tsv_file(filepath):
     except Exception as e:
         print(f"Warning: Could not read {filepath}: {e}", file=sys.stderr)
         return None
+
+def parse_reml_file(filepath):
+    """Parse LDAK REML file and extract key information"""
+    try:
+        data = {}
+        with open(filepath, 'r') as f:
+            lines = f.readlines()
+        
+        # Parse header information
+        for line in lines:
+            line = line.strip()
+            if line.startswith('Converged'):
+                parts = line.split()
+                data['Converged'] = parts[1] if len(parts) > 1 else 'NA'
+            elif line.startswith('Component'):
+                # This is the header line for component data
+                continue
+            elif line.startswith('Her_K1'):
+                parts = line.split()
+                if len(parts) >= 3:
+                    data['Her_K1_Heritability'] = float(parts[1]) if parts[1] != 'NA' else None
+                    data['Her_K1_SE'] = float(parts[2]) if parts[2] != 'NA' else None
+            elif line.startswith('Her_K2'):
+                parts = line.split()
+                if len(parts) >= 3:
+                    data['Her_K2_Heritability'] = float(parts[1]) if parts[1] != 'NA' else None
+                    data['Her_K2_SE'] = float(parts[2]) if parts[2] != 'NA' else None
+            elif line.startswith('Her_K3'):
+                parts = line.split()
+                if len(parts) >= 3:
+                    data['Her_K3_Heritability'] = float(parts[1]) if parts[1] != 'NA' else None
+                    data['Her_K3_SE'] = float(parts[2]) if parts[2] != 'NA' else None
+            elif line.startswith('Her_Top'):
+                parts = line.split()
+                if len(parts) >= 3:
+                    data['Her_Top_Heritability'] = float(parts[1]) if parts[1] != 'NA' else None
+                    data['Her_Top_SE'] = float(parts[2]) if parts[2] != 'NA' else None
+            elif line.startswith('Her_All'):
+                parts = line.split()
+                if len(parts) >= 3:
+                    data['Her_All_Heritability'] = float(parts[1]) if parts[1] != 'NA' else None
+                    data['Her_All_SE'] = float(parts[2]) if parts[2] != 'NA' else None
+        
+        return data
+    except Exception as e:
+        print(f"Warning: Could not parse REML file {filepath}: {e}", file=sys.stderr)
+        return None
+
+def find_reml_files(directory, way_type):
+    """Find all REML files for a specific way type (e.g., SNP_INDEL_split or SNP_INDEL_SV_unsplit)"""
+    reml_files = {}
+    
+    # Pattern: directory/way_type/results/phenotype/*.reml
+    pattern = os.path.join(directory, way_type, "results", "*", "*.reml")
+    files = glob.glob(pattern)
+    
+    for filepath in files:
+        # Extract phenotype from path: .../results/phenotype_name/file.reml
+        phenotype = os.path.basename(os.path.dirname(filepath))
+        reml_files[phenotype] = filepath
+    
+    return reml_files
+
+def add_reml_detail_sheet(wb, directory, way_type, sheet_name, phenotypes):
+    """Add a sheet with detailed REML information for a specific way type"""
+    
+    # Find all REML files for this way type
+    reml_files = find_reml_files(directory, way_type)
+    
+    if not reml_files:
+        print(f"Warning: No REML files found for {way_type}", file=sys.stderr)
+        return
+    
+    # Create new sheet
+    ws = wb.create_sheet(title=sheet_name)
+    
+    # Define headers
+    headers = ['Phenotype', 'Converged', 
+               'Her_K1', 'Her_K1_SE',
+               'Her_K2', 'Her_K2_SE',
+               'Her_K3', 'Her_K3_SE',
+               'Her_Top', 'Her_Top_SE',
+               'Her_All', 'Her_All_SE']
+    
+    # Write headers
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = Font(bold=True, size=11)
+        cell.fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    
+    # Write data for each phenotype
+    row_idx = 2
+    for phenotype in phenotypes:
+        if phenotype in reml_files:
+            reml_data = parse_reml_file(reml_files[phenotype])
+            if reml_data:
+                ws.cell(row=row_idx, column=1, value=phenotype)
+                ws.cell(row=row_idx, column=2, value=reml_data.get('Converged', 'NA'))
+                
+                # Her_K1
+                ws.cell(row=row_idx, column=3, value=reml_data.get('Her_K1_Heritability'))
+                ws.cell(row=row_idx, column=4, value=reml_data.get('Her_K1_SE'))
+                
+                # Her_K2
+                ws.cell(row=row_idx, column=5, value=reml_data.get('Her_K2_Heritability'))
+                ws.cell(row=row_idx, column=6, value=reml_data.get('Her_K2_SE'))
+                
+                # Her_K3
+                ws.cell(row=row_idx, column=7, value=reml_data.get('Her_K3_Heritability'))
+                ws.cell(row=row_idx, column=8, value=reml_data.get('Her_K3_SE'))
+                
+                # Her_Top
+                ws.cell(row=row_idx, column=9, value=reml_data.get('Her_Top_Heritability'))
+                ws.cell(row=row_idx, column=10, value=reml_data.get('Her_Top_SE'))
+                
+                # Her_All
+                ws.cell(row=row_idx, column=11, value=reml_data.get('Her_All_Heritability'))
+                ws.cell(row=row_idx, column=12, value=reml_data.get('Her_All_SE'))
+                
+                # Format numeric cells
+                for col in range(3, 13):
+                    cell = ws.cell(row=row_idx, column=col)
+                    if cell.value is not None and isinstance(cell.value, (int, float)):
+                        cell.number_format = '0.000000'
+                
+                row_idx += 1
+    
+    # Adjust column widths
+    ws.column_dimensions['A'].width = 30
+    ws.column_dimensions['B'].width = 12
+    for col_letter in ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']:
+        ws.column_dimensions[col_letter].width = 14
+    
+    print(f"Added sheet '{sheet_name}' with {row_idx - 2} phenotypes", file=sys.stderr)
 
 def combine_heritability_files(directory, output_prefix, output_file):
     """Combine all heritability TSV files into Excel table"""
@@ -181,6 +320,17 @@ def combine_heritability_files(directory, output_prefix, output_file):
     ws.column_dimensions['A'].width = 30
     for col in range(2, ws.max_column + 1):
         ws.column_dimensions[chr(64 + col)].width = 12
+    
+    # Add detailed REML sheets for merged types (SNP_INDEL and SNP_INDEL_SV)
+    merged_types = [
+        ('SNP_INDEL_split', 'SNP_INDEL_split'),
+        ('SNP_INDEL_unsplit', 'SNP_INDEL_unsplit'),
+        ('SNP_INDEL_SV_split', 'SNP_INDEL_SV_split'),
+        ('SNP_INDEL_SV_unsplit', 'SNP_INDEL_SV_unsplit')
+    ]
+    
+    for way_type, sheet_name in merged_types:
+        add_reml_detail_sheet(wb, directory, way_type, sheet_name, sorted_phenotypes)
     
     # Save file
     wb.save(output_file)

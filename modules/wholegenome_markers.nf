@@ -51,11 +51,13 @@ process PLINK_LD_PRUNING {
     # Convert VCF to PLINK binary format
     ${params.plink} \\
         --vcf ${vcf} \\
+        --double-id \\
         --memory ${params.plink_memory} \\
         --make-bed \\
         --out ${vcf.baseName} \\
         --allow-extra-chr \\
-        --allow-no-sex
+        --allow-no-sex \\
+        --maf ${params.maf_threshold}
     
     # Perform LD pruning
     ${params.plink} \\

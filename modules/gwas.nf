@@ -82,13 +82,15 @@ process PLINK_VCF_CONVERSION {
     """
     ${params.plink} \\
         --vcf ${vcf} \\
+        --double-id \\
         --memory ${params.plink_memory} \\
         --pheno ${phenotype} \\
         --mpheno 1 \\
         --make-bed \\
         --out ${phenotype.baseName} \\
         --allow-extra-chr \\
-        --allow-no-sex
+        --allow-no-sex \\
+        --maf ${params.maf_threshold}
     """
 }
 
@@ -284,16 +286,10 @@ process LDAK_PREPARE_GRM {
     script:
     """
     # Convert VCF to PLINK binary format (without phenotype)
-    plink --vcf ${vcf} --memory 10000 --make-bed --out ${vcf.baseName}_WG --allow-extra-chr --allow-no-sex
-    
-    # Cut weights regions
-    ${params.ldak} --bfile ${vcf.baseName}_WG --cut-weights cutweights --window-prune 0.98
-    
-    # Calculate weights
-    ${params.ldak} --bfile ${vcf.baseName}_WG --calc-weights-all cutweights --max-threads ${params.ldak_threads} > weights.out
-    
-    # Calculate GRM
-    ${params.ldak} --calc-kins-direct ${vcf.baseName}_WG_LDAK-Thin --bfile ${vcf.baseName}_WG --weights cutweights/weights.all --power -.5
+    plink --vcf ${vcf} --double-id --memory 10000 --make-bed --out ${vcf.baseName}_WG --allow-extra-chr --allow-no-sex --maf ${params.maf_threshold}
+
+    # Calculate GRM with user-specified power parameter
+    ${params.ldak} --calc-kins-direct ${vcf.baseName}_WG_LDAK-Thin --bfile ${vcf.baseName}_WG --power ${params.ldak_power}
     """
 }
 
@@ -305,7 +301,7 @@ process LDAK_CALCULATE_HERITABILITY {
                pattern: "*.reml"
     
     input:
-    tuple path(vcf), path(phenotype), path(population_list), val(way), val(way2), path(bed), path(bim), path(fam), path(grm_bin), path(grm_id), path(grm_details), path(grm_adjust)
+    tuple path(phenotype), path(population_list), val(way), path(grm_bin), path(grm_id), path(grm_details), path(grm_adjust)
     
     output:
     tuple val("${phenotype.baseName}"), path("*.reml"), val(way), emit: heritability
@@ -316,12 +312,39 @@ process LDAK_CALCULATE_HERITABILITY {
     phenotype_name=\$(basename ${phenotype} | sed 's/processed_//')
     
     # Get GRM prefix (remove .grm.bin extension)
-    # Use the full path to ensure GRM files are found in the same directory
-    grm_prefix=\$(dirname ${grm_bin})/\$(basename ${grm_bin} .grm.bin)
+    grm_prefix=\$(basename ${grm_bin} .grm.bin)
     
-    # Calculate heritability using pre-computed GRM
-    # GRM details file is automatically found by LDAK using the prefix
+    # Calculate heritability using single pre-computed GRM
     ${params.ldak} --pheno ${phenotype} --grm \${grm_prefix} --reml \${phenotype_name}_LDAK-Thin --constrain YES
+    """
+}
+
+process LDAK_CALCULATE_HERITABILITY_MGRM {
+    tag "LDAK_MGRM_${phenotype.baseName}_${way}"
+    label 'process_medium'
+    publishDir "${params.output_prefix}/${way}/results/${phenotype.baseName}", 
+               mode: 'copy', 
+               pattern: "*.reml"
+    
+    input:
+    tuple path(phenotype), path(population_list), val(way), path(grm_bins), path(grm_ids), path(grm_details), path(grm_adjusts)
+    
+    output:
+    tuple val("${phenotype.baseName}"), path("*.reml"), val(way), emit: heritability
+    
+    script:
+    """
+    # Extract phenotype name from filename
+    phenotype_name=\$(basename ${phenotype} | sed 's/processed_//')
+    
+    # Create GRM list file for multi-GRM analysis
+    # Extract GRM prefixes (remove .grm.bin extension) from all GRM binary files
+    for grm_file in ${grm_bins}; do
+        basename \${grm_file} .grm.bin >> \${phenotype_name}.grm.list
+    done
+    
+    # Calculate heritability using multiple GRMs
+    ${params.ldak} --reml \${phenotype_name}_LDAK-Thin --mgrm \${phenotype_name}.grm.list --pheno ${phenotype} --constrain YES
     """
 }
 
@@ -376,37 +399,103 @@ workflow GWAS_ANALYSIS_SPLIT {
     // Estimate heritability with GCTA
     // heritability = GCTA_HERITABILITY(association.association)
     
-    // Prepare LDAK GRM for each unique VCF+way combination
-    unique_vcfs = gwas_with_way.map { vcf, pheno, list, way -> tuple(vcf, way) }.unique()
-    
-    // Recode VCFs for LDAK (only INDEL, SV, and merged VCFs - SNP doesn't need recoding)
-    // Separate SNP VCFs from non-SNP VCFs
-    snp_vcfs_for_ldak = unique_vcfs.filter { vcf, way -> way == "SNP_split" }
-    non_snp_vcfs_for_ldak = unique_vcfs.filter { vcf, way -> way != "SNP_split" }
-    
-    // Recode non-SNP VCFs (INDEL, SV, and merged types)
-    recoded_vcfs_for_ldak = RECODE_VCF_FOR_LDAK(non_snp_vcfs_for_ldak)
-    
-    // Combine recoded VCFs with SNP VCFs for LDAK GRM preparation
-    all_vcfs_for_ldak = snp_vcfs_for_ldak.concat(recoded_vcfs_for_ldak.recoded_vcf)
-    
-    ldak_grm = LDAK_PREPARE_GRM(all_vcfs_for_ldak)
-    
-    // Combine GRM with phenotype information for LDAK heritability calculation
-    // Reorganize both channels to put way at index 0 for reliable matching
-    ldak_input = preprocessed
-        .map { vcf, pheno, list, way -> tuple(way, vcf, pheno, list) }
-        .combine(ldak_grm.grm_files, by: 0) // Match by way (index 0 in both)
-        .map { way, vcf, pheno, list, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
-            tuple(vcf, pheno, list, way, way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust) 
+    // Prepare LDAK GRM for individual variant types (SNP, INDEL, SV)
+    // These GRMs will be used both for single-type and multi-type heritability analysis
+    individual_vcfs = gwas_with_way
+        .map { vcf, pheno, list, way -> tuple(vcf, way) }
+        .unique()
+        .filter { vcf, way -> 
+            way in ["SNP_split", "INDEL_split", "SV_split"]
         }
-    ldak_heritability = LDAK_CALCULATE_HERITABILITY(ldak_input)
+    
+    // Recode VCFs for LDAK (only INDEL and SV need recoding)
+    snp_vcfs_for_ldak = individual_vcfs.filter { vcf, way -> way == "SNP_split" }
+    non_snp_vcfs_for_ldak = individual_vcfs.filter { vcf, way -> way != "SNP_split" }
+    recoded_vcfs_for_ldak = RECODE_VCF_FOR_LDAK(non_snp_vcfs_for_ldak)
+    all_individual_vcfs = snp_vcfs_for_ldak.concat(recoded_vcfs_for_ldak.recoded_vcf)
+    
+    // Generate GRMs for individual variant types
+    ldak_grm = LDAK_PREPARE_GRM(all_individual_vcfs)
+    
+    // Process single-type heritability (SNP, INDEL, SV only)
+    single_type_pheno = preprocessed
+        .filter { vcf, pheno, list, way -> 
+            way in ["SNP_split", "INDEL_split", "SV_split"]
+        }
+        .map { vcf, pheno, list, way -> tuple(way, pheno, list) }
+        .unique()
+    
+    single_type_input = single_type_pheno
+        .combine(ldak_grm.grm_files, by: 0)
+        .map { way, pheno, list, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+            tuple(pheno, list, way, grm_bin, grm_id, grm_details, grm_adjust)
+        }
+    
+    single_heritability = LDAK_CALCULATE_HERITABILITY(single_type_input)
+    
+    // Process multi-type heritability (SNP_INDEL and SNP_INDEL_SV)
+    // Extract phenotype info for merged types
+    merged_type_pheno = preprocessed
+        .filter { vcf, pheno, list, way -> 
+            way in ["SNP_INDEL_split", "SNP_INDEL_SV_split"]
+        }
+        .map { vcf, pheno, list, way -> tuple(way, pheno, list) }
+        .unique()
+    
+    // Prepare multi-GRM input for SNP_INDEL (needs SNP + INDEL GRMs)
+    snp_indel_input = merged_type_pheno
+        .filter { way, pheno, list -> way == "SNP_INDEL_split" }
+        .combine(
+            ldak_grm.grm_files
+                .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+                    way in ["SNP_split", "INDEL_split"]
+                }
+                .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+                    tuple(grm_bin, grm_id, grm_details, grm_adjust)
+                }
+                .collect()
+        )
+        .map { way, pheno, list, grm_files ->
+            def grm_bins = grm_files.collect { it[0] }
+            def grm_ids = grm_files.collect { it[1] }
+            def grm_details = grm_files.collect { it[2] }
+            def grm_adjusts = grm_files.collect { it[3] }
+            tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
+        }
+    
+    // Prepare multi-GRM input for SNP_INDEL_SV (needs SNP + INDEL + SV GRMs)
+    snp_indel_sv_input = merged_type_pheno
+        .filter { way, pheno, list -> way == "SNP_INDEL_SV_split" }
+        .combine(
+            ldak_grm.grm_files
+                .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+                    way in ["SNP_split", "INDEL_split", "SV_split"]
+                }
+                .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+                    tuple(grm_bin, grm_id, grm_details, grm_adjust)
+                }
+                .collect()
+        )
+        .map { way, pheno, list, grm_files ->
+            def grm_bins = grm_files.collect { it[0] }
+            def grm_ids = grm_files.collect { it[1] }
+            def grm_details = grm_files.collect { it[2] }
+            def grm_adjusts = grm_files.collect { it[3] }
+            tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
+        }
+    
+    // Combine multi-GRM inputs and calculate heritability
+    multi_grm_input = snp_indel_input.concat(snp_indel_sv_input)
+    multi_heritability = LDAK_CALCULATE_HERITABILITY_MGRM(multi_grm_input)
+    
+    // Combine single and multi heritability results
+    ldak_heritability = single_heritability.concat(multi_heritability)
     
     emit:
     assoc_files = association.association
     clumped_files = clumped.clumped
     // hsq_files = heritability.heritability
-    ldak_reml_files = ldak_heritability.heritability
+    ldak_reml_files = ldak_heritability
 }
 
 workflow GWAS_ANALYSIS_UNSPLIT {
@@ -454,36 +543,102 @@ workflow GWAS_ANALYSIS_UNSPLIT {
     // Estimate heritability with GCTA
     // heritability = GCTA_HERITABILITY(association.association)
     
-    // Prepare LDAK GRM for each unique VCF+way combination
-    unique_vcfs = gwas_with_way.map { vcf, pheno, list, way -> tuple(vcf, way) }.unique()
-    
-    // Recode VCFs for LDAK (only INDEL, SV, and merged VCFs - SNP doesn't need recoding)
-    // Separate SNP VCFs from non-SNP VCFs
-    snp_vcfs_for_ldak = unique_vcfs.filter { vcf, way -> way == "SNP_unsplit" }
-    non_snp_vcfs_for_ldak = unique_vcfs.filter { vcf, way -> way != "SNP_unsplit" }
-    
-    // Recode non-SNP VCFs (INDEL, SV, and merged types)
-    recoded_vcfs_for_ldak = RECODE_VCF_FOR_LDAK(non_snp_vcfs_for_ldak)
-    
-    // Combine recoded VCFs with SNP VCFs for LDAK GRM preparation
-    all_vcfs_for_ldak = snp_vcfs_for_ldak.concat(recoded_vcfs_for_ldak.recoded_vcf)
-    
-    ldak_grm = LDAK_PREPARE_GRM(all_vcfs_for_ldak)
-    
-    // Combine GRM with phenotype information for LDAK heritability calculation
-    // Reorganize both channels to put way at index 0 for reliable matching
-    ldak_input = preprocessed
-        .map { vcf, pheno, list, way -> tuple(way, vcf, pheno, list) }
-        .combine(ldak_grm.grm_files, by: 0) // Match by way (index 0 in both)
-        .map { way, vcf, pheno, list, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
-            tuple(vcf, pheno, list, way, way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust) 
+    // Prepare LDAK GRM for individual variant types (SNP, INDEL, SV)
+    // These GRMs will be used both for single-type and multi-type heritability analysis
+    individual_vcfs = gwas_with_way
+        .map { vcf, pheno, list, way -> tuple(vcf, way) }
+        .unique()
+        .filter { vcf, way -> 
+            way in ["SNP_unsplit", "INDEL_unsplit", "SV_unsplit"]
         }
-    ldak_heritability = LDAK_CALCULATE_HERITABILITY(ldak_input)
+    
+    // Recode VCFs for LDAK (only INDEL and SV need recoding)
+    snp_vcfs_for_ldak = individual_vcfs.filter { vcf, way -> way == "SNP_unsplit" }
+    non_snp_vcfs_for_ldak = individual_vcfs.filter { vcf, way -> way != "SNP_unsplit" }
+    recoded_vcfs_for_ldak = RECODE_VCF_FOR_LDAK(non_snp_vcfs_for_ldak)
+    all_individual_vcfs = snp_vcfs_for_ldak.concat(recoded_vcfs_for_ldak.recoded_vcf)
+    
+    // Generate GRMs for individual variant types
+    ldak_grm = LDAK_PREPARE_GRM(all_individual_vcfs)
+    
+    // Process single-type heritability (SNP, INDEL, SV only)
+    single_type_pheno = preprocessed
+        .filter { vcf, pheno, list, way -> 
+            way in ["SNP_unsplit", "INDEL_unsplit", "SV_unsplit"]
+        }
+        .map { vcf, pheno, list, way -> tuple(way, pheno, list) }
+        .unique()
+    
+    single_type_input = single_type_pheno
+        .combine(ldak_grm.grm_files, by: 0)
+        .map { way, pheno, list, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+            tuple(pheno, list, way, grm_bin, grm_id, grm_details, grm_adjust)
+        }
+    
+    single_heritability = LDAK_CALCULATE_HERITABILITY(single_type_input)
+    
+    // Process multi-type heritability (SNP_INDEL and SNP_INDEL_SV)
+    // Extract phenotype info for merged types
+    merged_type_pheno = preprocessed
+        .filter { vcf, pheno, list, way -> 
+            way in ["SNP_INDEL_unsplit", "SNP_INDEL_SV_unsplit"]
+        }
+        .map { vcf, pheno, list, way -> tuple(way, pheno, list) }
+        .unique()
+    
+    // Prepare multi-GRM input for SNP_INDEL (needs SNP + INDEL GRMs)
+    snp_indel_input = merged_type_pheno
+        .filter { way, pheno, list -> way == "SNP_INDEL_unsplit" }
+        .combine(
+            ldak_grm.grm_files
+                .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+                    way in ["SNP_unsplit", "INDEL_unsplit"]
+                }
+                .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+                    tuple(grm_bin, grm_id, grm_details, grm_adjust)
+                }
+                .collect()
+        )
+        .map { way, pheno, list, grm_files ->
+            def grm_bins = grm_files.collect { it[0] }
+            def grm_ids = grm_files.collect { it[1] }
+            def grm_details = grm_files.collect { it[2] }
+            def grm_adjusts = grm_files.collect { it[3] }
+            tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
+        }
+    
+    // Prepare multi-GRM input for SNP_INDEL_SV (needs SNP + INDEL + SV GRMs)
+    snp_indel_sv_input = merged_type_pheno
+        .filter { way, pheno, list -> way == "SNP_INDEL_SV_unsplit" }
+        .combine(
+            ldak_grm.grm_files
+                .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+                    way in ["SNP_unsplit", "INDEL_unsplit", "SV_unsplit"]
+                }
+                .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+                    tuple(grm_bin, grm_id, grm_details, grm_adjust)
+                }
+                .collect()
+        )
+        .map { way, pheno, list, grm_files ->
+            def grm_bins = grm_files.collect { it[0] }
+            def grm_ids = grm_files.collect { it[1] }
+            def grm_details = grm_files.collect { it[2] }
+            def grm_adjusts = grm_files.collect { it[3] }
+            tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
+        }
+    
+    // Combine multi-GRM inputs and calculate heritability
+    multi_grm_input = snp_indel_input.concat(snp_indel_sv_input)
+    multi_heritability = LDAK_CALCULATE_HERITABILITY_MGRM(multi_grm_input)
+    
+    // Combine single and multi heritability results
+    ldak_heritability = single_heritability.concat(multi_heritability)
     
     emit:
     assoc_files = association.association
     clumped_files = clumped.clumped
     // hsq_files = heritability.heritability
-    ldak_reml_files = ldak_heritability.heritability
+    ldak_reml_files = ldak_heritability
 }
 
