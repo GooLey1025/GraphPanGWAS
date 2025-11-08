@@ -53,30 +53,33 @@ process EXTRACT_LDAK_HERITABILITY {
                mode: 'copy'
     
     input:
-    tuple val(way), path(reml_files)
+    tuple val(way), val(reml_file_paths)
     val output_prefix
     
     output:
     path "${output_prefix}.${way}.ldak.tsv", emit: ldak_heritability_summary
     
     script:
+    def reml_paths = reml_file_paths instanceof List ? reml_file_paths.join(' ') : reml_file_paths
     """
     # Create output file with header
     echo -e "Phenotype\\tHeritability\\tSE\\tP_value" > ${output_prefix}.${way}.ldak.tsv
     
     # Extract heritability from each .reml file
-    # reml_files contains all reml files for this way (grouped by groupTuple)
-    for file in ${reml_files}; do
+    # reml_file_paths contains absolute paths to all reml files for this way
+    for file in ${reml_paths}; do
         if [ -f "\${file}" ]; then
-            # Get phenotype name (remove .reml extension and any LDAK suffix)
-            phenotype=\$(basename "\${file}" .reml | sed 's/_LDAK-Thin\$//')
+            # Get phenotype name (remove .reml extension, LDAK suffix, and processed_ prefix, then add .tsv)
+            phenotype=\$(basename "\${file}" .reml | sed 's/_LDAK-Thin\$//' | sed 's/^processed_//')
+            phenotype="\${phenotype}.tsv"
             
-            # Extract Her_K1 value from line 19, column 2 (heritability)
-            # Extract SE from line 19, column 3 (standard error)
+            # Extract Her_All value (total heritability) - works for both single GRM and MGRM
+            # Find the line starting with "Her_All" and extract columns 2 (heritability) and 3 (SE)
             # Extract LRT_P from line 17, column 2 (p-value)
-            if [ \$(wc -l < "\${file}") -ge 19 ]; then
-                heritability=\$(sed -n '19p' "\${file}" | awk '{print \$2}')
-                se=\$(sed -n '19p' "\${file}" | awk '{print \$3}')
+            her_all_line=\$(grep "^Her_All" "\${file}")
+            if [ ! -z "\${her_all_line}" ]; then
+                heritability=\$(echo "\${her_all_line}" | awk '{print \$2}')
+                se=\$(echo "\${her_all_line}" | awk '{print \$3}')
                 p_value=\$(sed -n '17p' "\${file}" | awk '{print \$2}')
                 
                 if [ ! -z "\${heritability}" ] && [ "\${heritability}" != "NA" ]; then
@@ -107,9 +110,10 @@ process GENERATE_HERITABILITY_TABLE {
     script:
     """
     # The files are already in the working directory or will be symlinked
-    # Python script will find them using glob pattern
+    # Python script needs access to the output directory for REML files
+    # Pass the full path to the output directory
     ${params.python3} ${projectDir}/scripts/combine_heritability_table.py \\
-        . \\
+        ${projectDir}/${params.output_prefix} \\
         ${output_prefix} \\
         ${output_prefix}.heritability_summary.xlsx
     

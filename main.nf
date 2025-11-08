@@ -170,7 +170,7 @@ workflow {
     // Merge split and unsplit LDAK results together
     all_ldak_reml = gwas_results_split.ldak_reml_files
         .concat(gwas_results_unsplit.ldak_reml_files)
-        .map { pheno_name, reml, way -> tuple(way, reml) }
+        .map { pheno_name, reml, way -> tuple(way, reml.toString()) }
         .groupTuple()
     
     // Extract LDAK heritability for all types together (both split and unsplit)

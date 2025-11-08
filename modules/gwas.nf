@@ -293,86 +293,265 @@ process LDAK_PREPARE_GRM {
     """
 }
 
-process LDAK_CALCULATE_HERITABILITY {
-    tag "LDAK_${phenotype.baseName}_${way}"
-    label 'process_medium'
-    publishDir "${params.output_prefix}/${way}/results/${phenotype.baseName}", 
-               mode: 'copy', 
-               pattern: "*.reml"
+process LDAK_BATCH_HERITABILITY_SPLIT {
+    tag "LDAK_BATCH_split"
+    label 'process_high'
+    publishDir "${params.output_prefix}", mode: 'copy', pattern: "*_split/results/**/*.reml"
     
     input:
-    tuple path(phenotype), path(population_list), val(way), path(grm_bin), path(grm_id), path(grm_details), path(grm_adjust)
+    tuple path(snp_grm_bin, stageAs: 'snp.grm.bin'), 
+          path(snp_grm_id, stageAs: 'snp.grm.id'), 
+          path(snp_grm_details, stageAs: 'snp.grm.details'), 
+          path(snp_grm_adjust, stageAs: 'snp.grm.adjust'),
+          path(indel_grm_bin, stageAs: 'indel.grm.bin'), 
+          path(indel_grm_id, stageAs: 'indel.grm.id'), 
+          path(indel_grm_details, stageAs: 'indel.grm.details'), 
+          path(indel_grm_adjust, stageAs: 'indel.grm.adjust'),
+          path(sv_grm_bin, stageAs: 'sv.grm.bin'), 
+          path(sv_grm_id, stageAs: 'sv.grm.id'), 
+          path(sv_grm_details, stageAs: 'sv.grm.details'), 
+          path(sv_grm_adjust, stageAs: 'sv.grm.adjust'),
+          val(phenotypes)
     
     output:
-    tuple val("${phenotype.baseName}"), path("*.reml"), val(way), emit: heritability
+    path("*_split/results/**/*.reml"), emit: reml_files
     
     script:
+    // phenotypes is a string with file paths separated by newlines
+    // Parse it back to a List
+    def pheno_paths_str = phenotypes.toString().trim()
+    def pheno_paths = pheno_paths_str ? pheno_paths_str.split('\n') as List : []
+    
+    def pheno_files = pheno_paths.collect { path_str ->
+        def f = file(path_str.trim())
+        f.toAbsolutePath().toString()
+    }
+    def pheno_files_str = pheno_files.join(' ')
+    def pheno_count = pheno_files.size()
     """
-    # Extract phenotype name from filename
-    phenotype_name=\$(basename ${phenotype} | sed 's/processed_//')
+    # Get GRM prefixes (now using staged names)
+    snp_grm="snp"
+    indel_grm="indel"
+    sv_grm="sv"
     
-    # Get GRM prefix (remove .grm.bin extension)
-    grm_prefix=\$(basename ${grm_bin} .grm.bin)
+    # Create GRM list files for merged types
+    printf "\${snp_grm}\\n\${indel_grm}\\n" > SNP_INDEL.grm.list
+    printf "\${snp_grm}\\n\${indel_grm}\\n\${sv_grm}\\n" > SNP_INDEL_SV.grm.list
     
-    # Calculate heritability using single pre-computed GRM
-    ${params.ldak} --pheno ${phenotype} --grm \${grm_prefix} --reml \${phenotype_name}_LDAK-Thin --constrain YES
+    # Create phenotypes directory and copy all phenotype files
+    mkdir -p phenotypes
+    echo "=========================================="
+    echo "Total phenotype files to copy: ${pheno_count}"
+    echo "Phenotype file paths:"
+    echo "${pheno_files_str}"
+    echo "=========================================="
+    
+    # Copy each phenotype file with detailed logging
+    copy_count=0
+    for pheno_file in ${pheno_files_str}; do
+        echo "Processing: \${pheno_file}"
+        if [ -f "\${pheno_file}" ]; then
+            filename=\$(basename "\${pheno_file}")
+            cp "\${pheno_file}" "phenotypes/\${filename}"
+            if [ \$? -eq 0 ]; then
+                echo "  SUCCESS: Copied \${pheno_file} -> phenotypes/\${filename}"
+                copy_count=\$((copy_count + 1))
+            else
+                echo "  ERROR: Failed to copy \${pheno_file}"
+                exit 1
+            fi
+        else
+            echo "  ERROR: File not found: \${pheno_file}"
+            echo "  Current directory: \$(pwd)"
+            echo "  File exists check: [ -f \"\${pheno_file}\" ]"
+            exit 1
+        fi
+    done
+    
+    echo "=========================================="
+    echo "Successfully copied \${copy_count} phenotype files"
+    echo "Verifying copied files in phenotypes directory:"
+    ls -lh phenotypes/ | head -30
+    echo "Total files in phenotypes directory:"
+    ls phenotypes/* 2>/dev/null | wc -l || echo "0"
+    echo "=========================================="
+    
+    # Create output directories
+    mkdir -p SNP_split/results INDEL_split/results SV_split/results
+    mkdir -p SNP_INDEL_split/results SNP_INDEL_SV_split/results
+    
+    # Process all phenotypes in parallel
+    export snp_grm indel_grm sv_grm
+    export LDAK="${params.ldak}"
+    
+    # Check if phenotypes directory has files before processing
+    if [ -n "\$(ls -A phenotypes/* 2>/dev/null)" ]; then
+        ls phenotypes/* | parallel -j ${task.cpus} '
+        pheno_file={}
+        pheno_name=\$(basename {} | sed "s/\\.[^.]*\$//")
+        
+        # Create directories for this phenotype
+        mkdir -p SNP_split/results/\${pheno_name}
+        mkdir -p INDEL_split/results/\${pheno_name}
+        mkdir -p SV_split/results/\${pheno_name}
+        mkdir -p SNP_INDEL_split/results/\${pheno_name}
+        mkdir -p SNP_INDEL_SV_split/results/\${pheno_name}
+        
+        # SNP heritability
+        \$LDAK --reml SNP_split/results/\${pheno_name}/\${pheno_name}_LDAK-Thin \\
+            --grm \$snp_grm --pheno \$pheno_file --constrain YES
+        
+        # INDEL heritability
+        \$LDAK --reml INDEL_split/results/\${pheno_name}/\${pheno_name}_LDAK-Thin \\
+            --grm \$indel_grm --pheno \$pheno_file --constrain YES
+        
+        # SV heritability
+        \$LDAK --reml SV_split/results/\${pheno_name}/\${pheno_name}_LDAK-Thin \\
+            --grm \$sv_grm --pheno \$pheno_file --constrain YES
+        
+        # SNP_INDEL merged heritability
+        \$LDAK --reml SNP_INDEL_split/results/\${pheno_name}/\${pheno_name}_LDAK-Thin \\
+            --mgrm SNP_INDEL.grm.list --pheno \$pheno_file --constrain YES
+        
+        # SNP_INDEL_SV merged heritability
+        \$LDAK --reml SNP_INDEL_SV_split/results/\${pheno_name}/\${pheno_name}_LDAK-Thin \\
+            --mgrm SNP_INDEL_SV.grm.list --pheno \$pheno_file --constrain YES
+        '
+    else
+        echo "ERROR: No phenotype files found in phenotypes directory!"
+        exit 1
+    fi
     """
 }
 
-process LDAK_CALCULATE_HERITABILITY_MGRM {
-    tag "LDAK_MGRM_${phenotype.baseName}_${way}"
-    label 'process_medium'
-    publishDir "${params.output_prefix}/${way}/results/${phenotype.baseName}", 
-               mode: 'copy', 
-               pattern: "*.reml"
+process LDAK_BATCH_HERITABILITY_UNSPLIT {
+    tag "LDAK_BATCH_unsplit"
+    label 'process_high'
+    publishDir "${params.output_prefix}", mode: 'copy', pattern: "*_unsplit/results/**/*.reml"
     
     input:
-    tuple path(phenotype), 
-          path(population_list), 
-          val(way), 
-          val(grm_bins), 
-          val(grm_ids), 
-          val(grm_details), 
-          val(grm_adjusts)
+    tuple path(snp_grm_bin, stageAs: 'snp.grm.bin'), 
+          path(snp_grm_id, stageAs: 'snp.grm.id'), 
+          path(snp_grm_details, stageAs: 'snp.grm.details'), 
+          path(snp_grm_adjust, stageAs: 'snp.grm.adjust'),
+          path(indel_grm_bin, stageAs: 'indel.grm.bin'), 
+          path(indel_grm_id, stageAs: 'indel.grm.id'), 
+          path(indel_grm_details, stageAs: 'indel.grm.details'), 
+          path(indel_grm_adjust, stageAs: 'indel.grm.adjust'),
+          path(sv_grm_bin, stageAs: 'sv.grm.bin'), 
+          path(sv_grm_id, stageAs: 'sv.grm.id'), 
+          path(sv_grm_details, stageAs: 'sv.grm.details'), 
+          path(sv_grm_adjust, stageAs: 'sv.grm.adjust'),
+          val(phenotypes)
     
     output:
-    tuple val("${phenotype.baseName}"), path("*.reml"), val(way), emit: heritability
+    path("*_unsplit/results/**/*.reml"), emit: reml_files
     
     script:
-    def bins_list = grm_bins instanceof List ? grm_bins : [grm_bins]
-    def ids_list = grm_ids instanceof List ? grm_ids : [grm_ids]
-    def details_list = grm_details instanceof List ? grm_details : [grm_details]
-    def adjusts_list = grm_adjusts instanceof List ? grm_adjusts : [grm_adjusts]
+    // phenotypes is a string with file paths separated by newlines
+    // Parse it back to a List
+    def pheno_paths_str = phenotypes.toString().trim()
+    def pheno_paths = pheno_paths_str ? pheno_paths_str.split('\n') as List : []
     
+    def pheno_files = pheno_paths.collect { path_str ->
+        def f = file(path_str.trim())
+        f.toAbsolutePath().toString()
+    }
+    def pheno_files_str = pheno_files.join(' ')
+    def pheno_count = pheno_files.size()
     """
-    # Extract phenotype name from filename
-    phenotype_name=\$(basename ${phenotype} | sed 's/processed_//')
+    # Get GRM prefixes (now using staged names)
+    snp_grm="snp"
+    indel_grm="indel"
+    sv_grm="sv"
     
-    # Reorganize GRM files to have consistent prefixes for LDAK
-    # LDAK expects all files (.grm.bin, .grm.id, .grm.details, .grm.adjust) to share the same prefix
+    # Create GRM list files for merged types
+    printf "\${snp_grm}\\n\${indel_grm}\\n" > SNP_INDEL.grm.list
+    printf "\${snp_grm}\\n\${indel_grm}\\n\${sv_grm}\\n" > SNP_INDEL_SV.grm.list
     
-    # Create arrays from the file paths
-    bins=(${bins_list.collect { "\"$it\"" }.join(' ')})
-    ids=(${ids_list.collect { "\"$it\"" }.join(' ')})
-    details=(${details_list.collect { "\"$it\"" }.join(' ')})
-    adjusts=(${adjusts_list.collect { "\"$it\"" }.join(' ')})
+    # Create phenotypes directory and copy all phenotype files
+    mkdir -p phenotypes
+    echo "=========================================="
+    echo "Total phenotype files to copy: ${pheno_count}"
+    echo "Phenotype file paths:"
+    echo "${pheno_files_str}"
+    echo "=========================================="
     
-    # Process each GRM set
-    for i in "\${!bins[@]}"; do
-        grm_num=\$((i + 1))
-        
-        # Create symlinks with numbered prefixes using absolute paths
-        ln -sf "\${bins[\$i]}" "\${grm_num}.grm.bin"
-        ln -sf "\${ids[\$i]}" "\${grm_num}.grm.id"
-        ln -sf "\${details[\$i]}" "\${grm_num}.grm.details"
-        ln -sf "\${adjusts[\$i]}" "\${grm_num}.grm.adjust"
-        
-        # Add to GRM list
-        echo "\${grm_num}" >> "\${phenotype_name}.grm.list"
+    # Copy each phenotype file with detailed logging
+    copy_count=0
+    for pheno_file in ${pheno_files_str}; do
+        echo "Processing: \${pheno_file}"
+        if [ -f "\${pheno_file}" ]; then
+            filename=\$(basename "\${pheno_file}")
+            cp "\${pheno_file}" "phenotypes/\${filename}"
+            if [ \$? -eq 0 ]; then
+                echo "  SUCCESS: Copied \${pheno_file} -> phenotypes/\${filename}"
+                copy_count=\$((copy_count + 1))
+            else
+                echo "  ERROR: Failed to copy \${pheno_file}"
+                exit 1
+            fi
+        else
+            echo "  ERROR: File not found: \${pheno_file}"
+            echo "  Current directory: \$(pwd)"
+            echo "  File exists check: [ -f \"\${pheno_file}\" ]"
+            exit 1
+        fi
     done
     
-    # Calculate heritability using multiple GRMs
-    ${params.ldak} --reml \${phenotype_name}_LDAK-Thin --mgrm \${phenotype_name}.grm.list --pheno ${phenotype} --constrain YES
+    echo "=========================================="
+    echo "Successfully copied \${copy_count} phenotype files"
+    echo "Verifying copied files in phenotypes directory:"
+    ls -lh phenotypes/ | head -30
+    echo "Total files in phenotypes directory:"
+    ls phenotypes/* 2>/dev/null | wc -l || echo "0"
+    echo "=========================================="
+    
+    # Create output directories
+    mkdir -p SNP_unsplit/results INDEL_unsplit/results SV_unsplit/results
+    mkdir -p SNP_INDEL_unsplit/results SNP_INDEL_SV_unsplit/results
+    
+    # Process all phenotypes in parallel
+    export snp_grm indel_grm sv_grm
+    export LDAK="${params.ldak}"
+    
+    # Check if phenotypes directory has files before processing
+    if [ -n "\$(ls -A phenotypes/* 2>/dev/null)" ]; then
+        ls phenotypes/* | parallel -j ${task.cpus} '
+        pheno_file={}
+        pheno_name=\$(basename {} | sed "s/\\.[^.]*\$//")
+        
+        # Create directories for this phenotype
+        mkdir -p SNP_unsplit/results/\${pheno_name}
+        mkdir -p INDEL_unsplit/results/\${pheno_name}
+        mkdir -p SV_unsplit/results/\${pheno_name}
+        mkdir -p SNP_INDEL_unsplit/results/\${pheno_name}
+        mkdir -p SNP_INDEL_SV_unsplit/results/\${pheno_name}
+        
+        # SNP heritability
+        \$LDAK --reml SNP_unsplit/results/\${pheno_name}/\${pheno_name}_LDAK-Thin \\
+            --grm \$snp_grm --pheno \$pheno_file --constrain YES
+        
+        # INDEL heritability
+        \$LDAK --reml INDEL_unsplit/results/\${pheno_name}/\${pheno_name}_LDAK-Thin \\
+            --grm \$indel_grm --pheno \$pheno_file --constrain YES
+        
+        # SV heritability
+        \$LDAK --reml SV_unsplit/results/\${pheno_name}/\${pheno_name}_LDAK-Thin \\
+            --grm \$sv_grm --pheno \$pheno_file --constrain YES
+        
+        # SNP_INDEL merged heritability
+        \$LDAK --reml SNP_INDEL_unsplit/results/\${pheno_name}/\${pheno_name}_LDAK-Thin \\
+            --mgrm SNP_INDEL.grm.list --pheno \$pheno_file --constrain YES
+        
+        # SNP_INDEL_SV merged heritability
+        \$LDAK --reml SNP_INDEL_SV_unsplit/results/\${pheno_name}/\${pheno_name}_LDAK-Thin \\
+            --mgrm SNP_INDEL_SV.grm.list --pheno \$pheno_file --constrain YES
+        '
+    else
+        echo "ERROR: No phenotype files found in phenotypes directory!"
+        exit 1
+    fi
     """
 }
 
@@ -428,7 +607,6 @@ workflow GWAS_ANALYSIS_SPLIT {
     // heritability = GCTA_HERITABILITY(association.association)
     
     // Prepare LDAK GRM for individual variant types (SNP, INDEL, SV)
-    // These GRMs will be used both for single-type and multi-type heritability analysis
     individual_vcfs = gwas_with_way
         .map { vcf, pheno, list, way -> tuple(vcf, way) }
         .unique()
@@ -436,99 +614,85 @@ workflow GWAS_ANALYSIS_SPLIT {
             way in ["SNP_split", "INDEL_split", "SV_split"]
         }
     
-    // Recode VCFs for LDAK (only INDEL and SV need recoding)
-    snp_vcfs_for_ldak = individual_vcfs.filter { vcf, way -> way == "SNP_split" }
-    non_snp_vcfs_for_ldak = individual_vcfs.filter { vcf, way -> way != "SNP_split" }
-    recoded_vcfs_for_ldak = RECODE_VCF_FOR_LDAK(non_snp_vcfs_for_ldak)
-    all_individual_vcfs = snp_vcfs_for_ldak.concat(recoded_vcfs_for_ldak.recoded_vcf)
+    // Recode all VCFs for LDAK
+    recoded_vcfs_for_ldak = RECODE_VCF_FOR_LDAK(individual_vcfs)
     
     // Generate GRMs for individual variant types
-    ldak_grm = LDAK_PREPARE_GRM(all_individual_vcfs)
+    ldak_grm = LDAK_PREPARE_GRM(recoded_vcfs_for_ldak.recoded_vcf)
     
-    // Process single-type heritability (SNP, INDEL, SV only)
-    single_type_pheno = preprocessed
-        .filter { vcf, pheno, list, way -> 
-            way in ["SNP_split", "INDEL_split", "SV_split"]
-        }
-        .map { vcf, pheno, list, way -> tuple(way, pheno, list) }
-        .unique()
+    // Collect all 3 GRMs and all phenotypes for batch processing
+    snp_grm = ldak_grm.grm_files.filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+        way == "SNP_split" 
+    }.map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+        tuple(grm_bin, grm_id, grm_details, grm_adjust)
+    }
     
-    single_type_input = single_type_pheno
-        .combine(ldak_grm.grm_files, by: 0)
-        .map { way, pheno, list, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
-            tuple(pheno, list, way, grm_bin, grm_id, grm_details, grm_adjust)
-        }
+    indel_grm = ldak_grm.grm_files.filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+        way == "INDEL_split" 
+    }.map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+        tuple(grm_bin, grm_id, grm_details, grm_adjust)
+    }
     
-    single_heritability = LDAK_CALCULATE_HERITABILITY(single_type_input)
+    sv_grm = ldak_grm.grm_files.filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+        way == "SV_split" 
+    }.map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+        tuple(grm_bin, grm_id, grm_details, grm_adjust)
+    }
     
-    // Process multi-type heritability (SNP_INDEL and SNP_INDEL_SV)
-    // Extract phenotype info for merged types
-    merged_type_pheno = preprocessed
-        .filter { vcf, pheno, list, way -> 
-            way in ["SNP_INDEL_split", "SNP_INDEL_SV_split"]
-        }
-        .map { vcf, pheno, list, way -> tuple(way, pheno, list) }
-        .unique()
-    
-    // Prepare multi-GRM input for SNP_INDEL (needs SNP + INDEL GRMs)
-    snp_indel_grms = ldak_grm.grm_files
-        .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
-            way in ["SNP_split", "INDEL_split"]
-        }
-        .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
-            tuple(grm_bin, grm_id, grm_details, grm_adjust)
-        }
+    // Collect all phenotypes (unique by file name to avoid duplicates across different VCFs)
+    all_phenotypes = preprocessed
+        .map { vcf, pheno, list, way -> tuple(pheno.name, pheno) }
+        .unique { it[0] }
+        .map { name, pheno -> pheno }
         .collect()
-        .map { grm_list ->
-            def grm_bins = grm_list.collect { it[0] }
-            def grm_ids = grm_list.collect { it[1] }
-            def grm_details = grm_list.collect { it[2] }
-            def grm_adjusts = grm_list.collect { it[3] }
-            tuple(grm_bins, grm_ids, grm_details, grm_adjusts)
+    
+    // Combine all GRMs and phenotypes for batch processing
+    // Problem: .combine() expands Lists, so we need to avoid using combine with the List
+    // Solution: Convert the List to a string (file paths separated by newlines), then parse in process
+    grm_tuple = snp_grm.first()
+        .combine(indel_grm.first())
+        .combine(sv_grm.first())
+    
+    // Convert phenotype list to a string of file paths (one per line)
+    // This prevents .combine() from expanding the List
+    pheno_list_str = all_phenotypes
+        .map { pheno_list ->
+            def paths = pheno_list.collect { it.toString() }
+            paths.join('\n')
         }
     
-    snp_indel_input = merged_type_pheno
-        .filter { way, pheno, list -> way == "SNP_INDEL_split" }
-        .combine(snp_indel_grms)
-        .map { way, pheno, list, grm_bins, grm_ids, grm_details, grm_adjusts ->
-            tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
+    // Combine GRM tuple with phenotype list string
+    batch_input = grm_tuple
+        .combine(pheno_list_str)
+        .map { snp_bin, snp_id, snp_details, snp_adjust, indel_bin, indel_id, indel_details, indel_adjust, sv_bin, sv_id, sv_details, sv_adjust, pheno_str ->
+            // Parse the string back to a List in the process
+            tuple(snp_bin, snp_id, snp_details, snp_adjust,
+                  indel_bin, indel_id, indel_details, indel_adjust,
+                  sv_bin, sv_id, sv_details, sv_adjust,
+                  pheno_str)
         }
     
-    // Prepare multi-GRM input for SNP_INDEL_SV (needs SNP + INDEL + SV GRMs)
-    snp_indel_sv_grms = ldak_grm.grm_files
-        .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
-            way in ["SNP_split", "INDEL_split", "SV_split"]
-        }
-        .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
-            tuple(grm_bin, grm_id, grm_details, grm_adjust)
-        }
-        .collect()
-        .map { grm_list ->
-            def grm_bins = grm_list.collect { it[0] }
-            def grm_ids = grm_list.collect { it[1] }
-            def grm_details = grm_list.collect { it[2] }
-            def grm_adjusts = grm_list.collect { it[3] }
-            tuple(grm_bins, grm_ids, grm_details, grm_adjusts)
-        }
+    // Run batch heritability calculation
+    ldak_heritability_raw = LDAK_BATCH_HERITABILITY_SPLIT(batch_input)
     
-    snp_indel_sv_input = merged_type_pheno
-        .filter { way, pheno, list -> way == "SNP_INDEL_SV_split" }
-        .combine(snp_indel_sv_grms)
-        .map { way, pheno, list, grm_bins, grm_ids, grm_details, grm_adjusts ->
-            tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
+    // Transform output to match expected format: (pheno_name, reml, way)
+    ldak_heritability = ldak_heritability_raw.reml_files
+        .flatten()
+        .map { reml_file ->
+            // Extract way and phenotype from path like "SNP_split/results/phenotype_name/phenotype_name_LDAK-Thin.reml"
+            // Use file.name to get just the filename, and navigate up the directory structure
+            def file_path = reml_file.toString()
+            def path_parts = file_path.tokenize('/')
+            // Find the index of "results" and extract way from the part before it
+            def results_idx = path_parts.findIndexOf { it == 'results' }
+            def way = results_idx > 0 ? path_parts[results_idx - 1] : path_parts[-4]  // e.g., "SNP_split"
+            def pheno_name = path_parts[results_idx + 1]  // e.g., "phenotype_name"
+            tuple(pheno_name, reml_file, way)
         }
-    
-    // Combine multi-GRM inputs and calculate heritability
-    multi_grm_input = snp_indel_input.concat(snp_indel_sv_input)
-    multi_heritability = LDAK_CALCULATE_HERITABILITY_MGRM(multi_grm_input)
-    
-    // Combine single and multi heritability results
-    ldak_heritability = single_heritability.concat(multi_heritability)
     
     emit:
     assoc_files = association.association
     clumped_files = clumped.clumped
-    // hsq_files = heritability.heritability
     ldak_reml_files = ldak_heritability
 }
 
@@ -578,7 +742,6 @@ workflow GWAS_ANALYSIS_UNSPLIT {
     // heritability = GCTA_HERITABILITY(association.association)
     
     // Prepare LDAK GRM for individual variant types (SNP, INDEL, SV)
-    // These GRMs will be used both for single-type and multi-type heritability analysis
     individual_vcfs = gwas_with_way
         .map { vcf, pheno, list, way -> tuple(vcf, way) }
         .unique()
@@ -586,99 +749,85 @@ workflow GWAS_ANALYSIS_UNSPLIT {
             way in ["SNP_unsplit", "INDEL_unsplit", "SV_unsplit"]
         }
     
-    // Recode VCFs for LDAK (only INDEL and SV need recoding)
-    snp_vcfs_for_ldak = individual_vcfs.filter { vcf, way -> way == "SNP_unsplit" }
-    non_snp_vcfs_for_ldak = individual_vcfs.filter { vcf, way -> way != "SNP_unsplit" }
-    recoded_vcfs_for_ldak = RECODE_VCF_FOR_LDAK(non_snp_vcfs_for_ldak)
-    all_individual_vcfs = snp_vcfs_for_ldak.concat(recoded_vcfs_for_ldak.recoded_vcf)
+    // Recode all VCFs for LDAK
+    recoded_vcfs_for_ldak = RECODE_VCF_FOR_LDAK(individual_vcfs)
     
     // Generate GRMs for individual variant types
-    ldak_grm = LDAK_PREPARE_GRM(all_individual_vcfs)
+    ldak_grm = LDAK_PREPARE_GRM(recoded_vcfs_for_ldak.recoded_vcf)
     
-    // Process single-type heritability (SNP, INDEL, SV only)
-    single_type_pheno = preprocessed
-        .filter { vcf, pheno, list, way -> 
-            way in ["SNP_unsplit", "INDEL_unsplit", "SV_unsplit"]
-        }
-        .map { vcf, pheno, list, way -> tuple(way, pheno, list) }
-        .unique()
+    // Collect all 3 GRMs and all phenotypes for batch processing
+    snp_grm = ldak_grm.grm_files.filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+        way == "SNP_unsplit" 
+    }.map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+        tuple(grm_bin, grm_id, grm_details, grm_adjust)
+    }
     
-    single_type_input = single_type_pheno
-        .combine(ldak_grm.grm_files, by: 0)
-        .map { way, pheno, list, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
-            tuple(pheno, list, way, grm_bin, grm_id, grm_details, grm_adjust)
-        }
+    indel_grm = ldak_grm.grm_files.filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+        way == "INDEL_unsplit" 
+    }.map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+        tuple(grm_bin, grm_id, grm_details, grm_adjust)
+    }
     
-    single_heritability = LDAK_CALCULATE_HERITABILITY(single_type_input)
+    sv_grm = ldak_grm.grm_files.filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
+        way == "SV_unsplit" 
+    }.map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
+        tuple(grm_bin, grm_id, grm_details, grm_adjust)
+    }
     
-    // Process multi-type heritability (SNP_INDEL and SNP_INDEL_SV)
-    // Extract phenotype info for merged types
-    merged_type_pheno = preprocessed
-        .filter { vcf, pheno, list, way -> 
-            way in ["SNP_INDEL_unsplit", "SNP_INDEL_SV_unsplit"]
-        }
-        .map { vcf, pheno, list, way -> tuple(way, pheno, list) }
-        .unique()
-    
-    // Prepare multi-GRM input for SNP_INDEL (needs SNP + INDEL GRMs)
-    snp_indel_grms = ldak_grm.grm_files
-        .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
-            way in ["SNP_unsplit", "INDEL_unsplit"]
-        }
-        .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
-            tuple(grm_bin, grm_id, grm_details, grm_adjust)
-        }
+    // Collect all phenotypes (unique by file name to avoid duplicates across different VCFs)
+    all_phenotypes = preprocessed
+        .map { vcf, pheno, list, way -> tuple(pheno.name, pheno) }
+        .unique { it[0] }
+        .map { name, pheno -> pheno }
         .collect()
-        .map { grm_list ->
-            def grm_bins = grm_list.collect { it[0] }
-            def grm_ids = grm_list.collect { it[1] }
-            def grm_details = grm_list.collect { it[2] }
-            def grm_adjusts = grm_list.collect { it[3] }
-            tuple(grm_bins, grm_ids, grm_details, grm_adjusts)
+    
+    // Combine all GRMs and phenotypes for batch processing
+    // Problem: .combine() expands Lists, so we need to avoid using combine with the List
+    // Solution: Convert the List to a string (file paths separated by newlines), then parse in process
+    grm_tuple = snp_grm.first()
+        .combine(indel_grm.first())
+        .combine(sv_grm.first())
+    
+    // Convert phenotype list to a string of file paths (one per line)
+    // This prevents .combine() from expanding the List
+    pheno_list_str = all_phenotypes
+        .map { pheno_list ->
+            def paths = pheno_list.collect { it.toString() }
+            paths.join('\n')
         }
     
-    snp_indel_input = merged_type_pheno
-        .filter { way, pheno, list -> way == "SNP_INDEL_unsplit" }
-        .combine(snp_indel_grms)
-        .map { way, pheno, list, grm_bins, grm_ids, grm_details, grm_adjusts ->
-            tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
+    // Combine GRM tuple with phenotype list string
+    batch_input = grm_tuple
+        .combine(pheno_list_str)
+        .map { snp_bin, snp_id, snp_details, snp_adjust, indel_bin, indel_id, indel_details, indel_adjust, sv_bin, sv_id, sv_details, sv_adjust, pheno_str ->
+            // Parse the string back to a List in the process
+            tuple(snp_bin, snp_id, snp_details, snp_adjust,
+                  indel_bin, indel_id, indel_details, indel_adjust,
+                  sv_bin, sv_id, sv_details, sv_adjust,
+                  pheno_str)
         }
     
-    // Prepare multi-GRM input for SNP_INDEL_SV (needs SNP + INDEL + SV GRMs)
-    snp_indel_sv_grms = ldak_grm.grm_files
-        .filter { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust -> 
-            way in ["SNP_unsplit", "INDEL_unsplit", "SV_unsplit"]
-        }
-        .map { way, bed, bim, fam, grm_bin, grm_id, grm_details, grm_adjust ->
-            tuple(grm_bin, grm_id, grm_details, grm_adjust)
-        }
-        .collect()
-        .map { grm_list ->
-            def grm_bins = grm_list.collect { it[0] }
-            def grm_ids = grm_list.collect { it[1] }
-            def grm_details = grm_list.collect { it[2] }
-            def grm_adjusts = grm_list.collect { it[3] }
-            tuple(grm_bins, grm_ids, grm_details, grm_adjusts)
-        }
+    // Run batch heritability calculation
+    ldak_heritability_raw = LDAK_BATCH_HERITABILITY_UNSPLIT(batch_input)
     
-    snp_indel_sv_input = merged_type_pheno
-        .filter { way, pheno, list -> way == "SNP_INDEL_SV_unsplit" }
-        .combine(snp_indel_sv_grms)
-        .map { way, pheno, list, grm_bins, grm_ids, grm_details, grm_adjusts ->
-            tuple(pheno, list, way, grm_bins, grm_ids, grm_details, grm_adjusts)
+    // Transform output to match expected format: (pheno_name, reml, way)
+    ldak_heritability = ldak_heritability_raw.reml_files
+        .flatten()
+        .map { reml_file ->
+            // Extract way and phenotype from path like "SNP_unsplit/results/phenotype_name/phenotype_name_LDAK-Thin.reml"
+            // Use file.name to get just the filename, and navigate up the directory structure
+            def file_path = reml_file.toString()
+            def path_parts = file_path.tokenize('/')
+            // Find the index of "results" and extract way from the part before it
+            def results_idx = path_parts.findIndexOf { it == 'results' }
+            def way = results_idx > 0 ? path_parts[results_idx - 1] : path_parts[-4]  // e.g., "SNP_unsplit"
+            def pheno_name = path_parts[results_idx + 1]  // e.g., "phenotype_name"
+            tuple(pheno_name, reml_file, way)
         }
-    
-    // Combine multi-GRM inputs and calculate heritability
-    multi_grm_input = snp_indel_input.concat(snp_indel_sv_input)
-    multi_heritability = LDAK_CALCULATE_HERITABILITY_MGRM(multi_grm_input)
-    
-    // Combine single and multi heritability results
-    ldak_heritability = single_heritability.concat(multi_heritability)
     
     emit:
     assoc_files = association.association
     clumped_files = clumped.clumped
-    // hsq_files = heritability.heritability
     ldak_reml_files = ldak_heritability
 }
 
