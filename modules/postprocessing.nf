@@ -194,7 +194,7 @@ process GENERATE_MANHATTAN_PLOT {
     tuple val(phenotype_name), path(assoc_file)
     
     output:
-    path "${phenotype_name}_manhattan.png", emit: manhattan_plot optional true
+    path "${phenotype_name}_manhattan.png", emit: manhattan_plot, optional: true
     
     when:
     params.generate_plots
