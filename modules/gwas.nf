@@ -158,6 +158,28 @@ process GEMMA_LMM_ASSOCIATION {
     """
 }
 
+process MANHATTAN_PLOT {
+    tag "${phenotype_name}_${way}"
+    label 'process_low'
+    publishDir "${params.output_prefix}/${way}/plots/", 
+               mode: 'copy', 
+               pattern: "*.manhattan.png"
+    
+    input:
+    tuple val(phenotype_name), path(bed), path(bim), path(fam), path(assoc), path(phenotype), val(way)
+    
+    output:
+    path("${phenotype_name}.manhattan.png"), emit: plot
+    
+    script:
+    """
+    ${params.python3} ${projectDir}/scripts/manhattan_plot.py \\
+        ${assoc} \\
+        ${phenotype_name}.manhattan.png \\
+        processed_${phenotype_name}_${way}
+    """
+}
+
 process PLINK_CLUMPING {
     tag "${phenotype_name}_${way}"
     label 'process_low'
@@ -600,6 +622,9 @@ workflow GWAS_ANALYSIS_SPLIT {
     // Run GEMMA LMM association
     association = GEMMA_LMM_ASSOCIATION(kinship.kinship)
     
+    // plot the manhattan plot of the association results
+    MANHATTAN_PLOT(association.association)
+    
     // Perform LD clumping with PLINK
     clumped = PLINK_CLUMPING(association.association)
     
@@ -734,6 +759,9 @@ workflow GWAS_ANALYSIS_UNSPLIT {
     
     // Run GEMMA LMM association
     association = GEMMA_LMM_ASSOCIATION(kinship.kinship)
+    
+    // plot the manhattan plot of the association results
+    MANHATTAN_PLOT(association.association)
     
     // Perform LD clumping with PLINK
     clumped = PLINK_CLUMPING(association.association)
